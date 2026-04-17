@@ -11,6 +11,8 @@ CHECK_INTERVAL_SECONDS = 60
 EMAIL_USER = os.getenv("MAIL_USER")
 EMAIL_PASS = os.getenv("MAIL_PASS")
 
+STATE_FILE = "last_mail_id.txt"
+
 
 def decode_mime_text(value):
     if not value:
@@ -21,10 +23,7 @@ def decode_mime_text(value):
 
     for part, charset in parts:
         if isinstance(part, bytes):
-            try:
-                result.append(part.decode(charset or "utf-8", errors="replace"))
-            except Exception:
-                result.append(part.decode("utf-8", errors="replace"))
+            result.append(part.decode(charset or "utf-8", errors="replace"))
         else:
             result.append(part)
 
@@ -32,44 +31,51 @@ def decode_mime_text(value):
     return text if text else "(intet emne)"
 
 
+def get_last_mail_id():
+    try:
+        with open(STATE_FILE, "r") as f:
+            return int(f.read().strip())
+    except:
+        return 0
+
+
+def save_last_mail_id(mail_id):
+    with open(STATE_FILE, "w") as f:
+        f.write(str(mail_id))
+
+
 def check_mail():
-    print("Mail-bot starter...")
     print("Tjekker mail...")
 
     if not EMAIL_USER or not EMAIL_PASS:
-        raise ValueError("MAIL_USER eller MAIL_PASS mangler i Railway Variables")
+        raise ValueError("MAIL_USER eller MAIL_PASS mangler")
+
+    last_seen = get_last_mail_id()
+    print(f"Sidst behandlet ID: {last_seen}")
 
     mail = imaplib.IMAP4_SSL(IMAP_SERVER)
     mail.login(EMAIL_USER, EMAIL_PASS)
+    mail.select(MAILBOX)
 
-    status, mailbox_info = mail.select(MAILBOX)
-    print(f"Valgt mappe: {MAILBOX}")
-    print(f"Select status: {status}")
-    print(f"Mailbox info: {mailbox_info}")
-
-    if status != "OK":
-        print("Kunne ikke åbne INBOX")
-        mail.logout()
-        return
-
-    # Hent ALLE mails til test
     status, messages = mail.search(None, "ALL")
-    if status != "OK":
-        print("Kunne ikke søge efter mails")
+    mail_ids = messages[0].split()
+
+    if not mail_ids:
+        print("Ingen mails fundet")
         mail.logout()
         return
 
-    mail_ids = messages[0].split()
-    print(f"Samlet antal mails i INBOX: {len(mail_ids)}")
+    nyeste_id = int(mail_ids[-1])
 
-    sidste_10 = mail_ids[-10:]
-    print(f"Viser de sidste {len(sidste_10)} mails")
+    print(f"Nyeste mail ID: {nyeste_id}")
 
-    for mail_id in sidste_10:
-        status, msg_data = mail.fetch(mail_id, "(RFC822)")
-        if status != "OK":
-            print(f"Kunne ikke hente mail {mail_id}")
+    for mail_id in mail_ids:
+        mail_id_int = int(mail_id)
+
+        if mail_id_int <= last_seen:
             continue
+
+        status, msg_data = mail.fetch(mail_id, "(RFC822)")
 
         for response_part in msg_data:
             if isinstance(response_part, tuple):
@@ -77,23 +83,25 @@ def check_mail():
 
                 sender = decode_mime_text(msg.get("From"))
                 subject = decode_mime_text(msg.get("Subject"))
-                date = decode_mime_text(msg.get("Date"))
 
                 print("========================================")
-                print(f"Mail ID: {mail_id.decode()}")
+                print(f"NY MAIL (ID {mail_id_int})")
                 print(f"Fra: {sender}")
                 print(f"Emne: {subject}")
-                print(f"Dato: {date}")
                 print("========================================")
+
+    save_last_mail_id(nyeste_id)
 
     mail.logout()
 
+
+print("Mail-bot starter...")
 
 while True:
     try:
         check_mail()
     except Exception as e:
-        print(f"Fejl: {e}")
+        print("Fejl:", e)
 
     print(f"Venter {CHECK_INTERVAL_SECONDS} sekunder...")
     time.sleep(CHECK_INTERVAL_SECONDS)
