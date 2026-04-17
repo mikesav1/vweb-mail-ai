@@ -41,7 +41,7 @@ def check_mail():
     mail.login(EMAIL_USER, EMAIL_PASS)
     mail.select(MAILBOX)
 
-    status, messages = mail.search(None, "UNSEEN")
+    status, messages = mail.search(None, "ALL")
     if status != "OK":
         print("Kunne ikke hente ulæste mails.")
         mail.logout()
