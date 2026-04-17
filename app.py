@@ -8,9 +8,10 @@ import smtplib
 from datetime import datetime
 from email.header import decode_header
 from email.message import EmailMessage
+
 from openai import OpenAI
 from bs4 import BeautifulSoup
-from flask import Flask, request, redirect, render_template_string, url_for
+from flask import Flask, redirect, render_template_string, url_for
 
 print("APP STARTER NU!!!")
 
@@ -29,12 +30,10 @@ FROM_EMAIL = os.getenv("FROM_EMAIL", os.getenv("MAIL_USER", ""))
 
 PORT = int(os.getenv("PORT", "8080"))
 
-AUTO_IGNORE_CATEGORIES = {"spam", "nyhedsbrev", "automatisk"}
 REPLY_CATEGORIES = {"kunde", "vigtig", "ukendt"}
 
 file_lock = threading.Lock()
 app = Flask(__name__)
-
 
 HTML_TEMPLATE = """
 <!doctype html>
@@ -242,7 +241,6 @@ def get_plain_text_body(msg):
 
             if content_type == "text/plain" and not plain_body:
                 plain_body = clean_text(decoded)
-
             elif content_type == "text/html" and not html_body:
                 html_body = html_to_text(decoded)
 
@@ -378,13 +376,10 @@ def parse_ai_result(ai_text):
 
         if line.upper().startswith("KATEGORI:"):
             result["category"] = line.split(":", 1)[1].strip().lower()
-
         elif line.upper().startswith("KRÆVER_SVAR:"):
             result["requires_reply"] = line.split(":", 1)[1].strip().lower()
-
         elif line.upper().startswith("RESUMÉ:"):
             result["summary"] = line.split(":", 1)[1].strip()
-
         elif line.upper().startswith("SVARUDKAST:"):
             result["draft_reply"] = line.split(":", 1)[1].strip()
 
