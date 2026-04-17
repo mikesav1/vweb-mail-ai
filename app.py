@@ -4,11 +4,8 @@ import os
 import time
 import json
 import threading
-import smtplib
-import ssl
 from datetime import datetime
 from email.header import decode_header
-from email.message import EmailMessage
 
 from openai import OpenAI
 from bs4 import BeautifulSoup
@@ -22,13 +19,6 @@ CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "60"))
 
 STATE_FILE = "last_mail_id.txt"
 PENDING_REPLIES_FILE = "pending_replies.json"
-
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASS = os.getenv("SMTP_PASS")
-FROM_EMAIL = os.getenv("FROM_EMAIL", os.getenv("MAIL_USER", ""))
-
 PORT = int(os.getenv("PORT", "8080"))
 
 REPLY_CATEGORIES = {"kunde", "vigtig", "ukendt"}
@@ -67,10 +57,9 @@ HTML_TEMPLATE = """
       margin-left: 6px;
     }
     .status-pending_approval { background: #fff7ed; color: #9a3412; }
-    .status-approved { background: #eff6ff; color: #1d4ed8; }
-    .status-sent { background: #ecfdf5; color: #047857; }
+    .status-approved_manual { background: #eff6ff; color: #1d4ed8; }
     .status-rejected { background: #fef2f2; color: #b91c1c; }
-    .status-send_failed { background: #fef2f2; color: #b91c1c; }
+    .status-archived { background: #f1f5f9; color: #475569; }
     .actions form { display: inline-block; margin-right: 8px; margin-top: 10px; }
     button {
       border: 0;
@@ -81,7 +70,7 @@ HTML_TEMPLATE = """
     }
     .approve { background: #2563eb; color: white; }
     .reject { background: #dc2626; color: white; }
-    .send { background: #059669; color: white; }
+    .archive { background: #475569; color: white; }
     .disabled { background: #94a3b8; color: white; cursor: not-allowed; }
     pre {
       background: #f8fafc;
@@ -90,6 +79,7 @@ HTML_TEMPLATE = """
       white-space: pre-wrap;
       border: 1px solid #e2e8f0;
       overflow-x: auto;
+      margin-top: 6px;
     }
     .topbar {
       display: flex;
@@ -103,64 +93,76 @@ HTML_TEMPLATE = """
       padding: 12px 16px;
       border: 1px solid #ddd;
     }
+    .copybox {
+      background: #f8fafc;
+      border: 1px dashed #94a3b8;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 14px;
+      color: #334155;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
   <h1>Mailbot godkendelse</h1>
-  <div class="muted">Denne version sender ikke noget uden manuel handling. Godkend først, send bagefter.</div>
+  <div class="muted">Denne version sender ikke noget automatisk. Godkendte svar er kun klar til manuel afsendelse.</div>
 
   <div class="topbar">
     <div class="summary">Afventer: <strong>{{ pending_count }}</strong></div>
-    <div class="summary">Godkendt: <strong>{{ approved_count }}</strong></div>
-    <div class="summary">Sendt: <strong>{{ sent_count }}</strong></div>
+    <div class="summary">Godkendt til manuel send: <strong>{{ approved_count }}</strong></div>
     <div class="summary">Afvist: <strong>{{ rejected_count }}</strong></div>
+    <div class="summary">Arkiveret: <strong>{{ archived_count }}</strong></div>
   </div>
 
   {% if items %}
     {% for item in items %}
       <div class="card">
-        <div class="row"><span class="label">Mail ID:</span> {{ item.mail_id }}
+        <div class="row">
+          <span class="label">Mail ID:</span> {{ item.mail_id }}
           <span class="badge">{{ item.category }}</span>
           <span class="badge status-{{ item.status }}">{{ item.status }}</span>
         </div>
+
         <div class="row"><span class="label">Fra:</span> {{ item.sender }}</div>
         <div class="row"><span class="label">Emne:</span> {{ item.subject }}</div>
         <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
         <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
+
         <div class="row"><span class="label">Original preview:</span></div>
         <pre>{{ item.original_preview }}</pre>
+
         <div class="row"><span class="label">Svarudkast:</span></div>
         <pre>{{ item.draft_reply }}</pre>
-        {% if item.sent_at %}
-          <div class="row"><span class="label">Sendt:</span> {{ item.sent_at }}</div>
-        {% endif %}
-        {% if item.send_error %}
-          <div class="row"><span class="label">Sendefejl:</span> {{ item.send_error }}</div>
+
+        {% if item.status == "approved_manual" %}
+          <div class="copybox">
+            Dette svar er godkendt og klar til manuel afsendelse. Kopiér teksten ovenfor og indsæt den i din mail.
+          </div>
         {% endif %}
 
         <div class="actions">
           {% if item.status == "pending_approval" %}
             <form method="post" action="{{ url_for('approve_reply', mail_id=item.mail_id) }}">
-              <button class="approve" type="submit">Godkend</button>
+              <button class="approve" type="submit">Godkend til manuel send</button>
             </form>
             <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
               <button class="reject" type="submit">Afvis</button>
             </form>
-          {% elif item.status == "approved" %}
-            <form method="post" action="{{ url_for('send_reply', mail_id=item.mail_id) }}">
-              <button class="send" type="submit">Send godkendt mail</button>
+            <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
+              <button class="archive" type="submit">Arkivér</button>
             </form>
+          {% elif item.status == "approved_manual" %}
             <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
               <button class="reject" type="submit">Afvis</button>
             </form>
-          {% elif item.status == "sent" %}
-            <button class="disabled" disabled>Mail sendt</button>
+            <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
+              <button class="archive" type="submit">Arkivér</button>
+            </form>
           {% elif item.status == "rejected" %}
             <button class="disabled" disabled>Afvist</button>
-          {% elif item.status == "send_failed" %}
-            <form method="post" action="{{ url_for('send_reply', mail_id=item.mail_id) }}">
-              <button class="send" type="submit">Prøv at sende igen</button>
-            </form>
+          {% elif item.status == "archived" %}
+            <button class="disabled" disabled>Arkiveret</button>
           {% endif %}
         </div>
       </div>
@@ -318,25 +320,20 @@ def save_pending_reply(mail_id, sender, subject, category, summary, reply_needed
             "summary": summary,
             "draft_reply": draft_reply,
             "original_preview": original_preview[:1500],
-            "status": "pending_approval",
-            "sent_at": None,
-            "send_error": None
+            "status": "pending_approval"
         }
     )
 
     save_pending_replies(pending)
 
 
-def update_reply_status(mail_id, new_status, send_error=None, sent_at=None):
+def update_reply_status(mail_id, new_status):
     items = load_pending_replies()
     updated = False
 
     for item in items:
         if str(item.get("mail_id")) == str(mail_id):
             item["status"] = new_status
-            item["send_error"] = send_error
-            if sent_at:
-                item["sent_at"] = sent_at
             updated = True
             break
 
@@ -344,14 +341,6 @@ def update_reply_status(mail_id, new_status, send_error=None, sent_at=None):
         save_pending_replies(items)
 
     return updated
-
-
-def get_reply_by_id(mail_id):
-    items = load_pending_replies()
-    for item in items:
-        if str(item.get("mail_id")) == str(mail_id):
-            return item
-    return None
 
 
 def get_openai_client():
@@ -429,51 +418,6 @@ Mailindhold:
     )
 
     return response.output_text.strip()
-
-
-def send_email_reply(to_email, original_subject, draft_reply):
-    if not SMTP_SERVER or not SMTP_USER or not SMTP_PASS or not FROM_EMAIL:
-        raise ValueError("SMTP_SERVER, SMTP_USER, SMTP_PASS eller FROM_EMAIL mangler i Railway Variables")
-
-    print("SMTP_SERVER:", SMTP_SERVER)
-    print("SMTP_PORT:", SMTP_PORT)
-    print("SMTP_USER fundet:", bool(SMTP_USER))
-    print("SMTP_PASS fundet:", bool(SMTP_PASS))
-    print("FROM_EMAIL:", FROM_EMAIL)
-    print("Forsøger at sende til:", to_email)
-
-    msg = EmailMessage()
-    msg["From"] = FROM_EMAIL
-    msg["To"] = to_email
-
-    if original_subject.lower().startswith("re:"):
-        msg["Subject"] = original_subject
-    else:
-        msg["Subject"] = f"Re: {original_subject}"
-
-    msg.set_content(draft_reply)
-
-    if SMTP_PORT == 465:
-        print("Bruger SMTP_SSL")
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=30, context=context) as server:
-            server.login(SMTP_USER, SMTP_PASS)
-            server.send_message(msg)
-    else:
-        print("Bruger SMTP + STARTTLS")
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
-            server.ehlo()
-            server.starttls(context=ssl.create_default_context())
-            server.ehlo()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.send_message(msg)
-
-    print("MAIL SENDT OK")
-
-
-def extract_reply_email(sender):
-    parsed = email.utils.parseaddr(sender)
-    return parsed[1]
 
 
 def check_mail():
@@ -604,23 +548,23 @@ def dashboard():
     items = sorted(items, key=lambda x: (x.get("status") != "pending_approval", x.get("saved_at", "")))
 
     pending_count = sum(1 for i in items if i.get("status") == "pending_approval")
-    approved_count = sum(1 for i in items if i.get("status") == "approved")
-    sent_count = sum(1 for i in items if i.get("status") == "sent")
+    approved_count = sum(1 for i in items if i.get("status") == "approved_manual")
     rejected_count = sum(1 for i in items if i.get("status") == "rejected")
+    archived_count = sum(1 for i in items if i.get("status") == "archived")
 
     return render_template_string(
         HTML_TEMPLATE,
         items=items,
         pending_count=pending_count,
         approved_count=approved_count,
-        sent_count=sent_count,
-        rejected_count=rejected_count
+        rejected_count=rejected_count,
+        archived_count=archived_count
     )
 
 
 @app.route("/approve/<mail_id>", methods=["POST"])
 def approve_reply(mail_id):
-    update_reply_status(mail_id, "approved")
+    update_reply_status(mail_id, "approved_manual")
     return redirect(url_for("dashboard"))
 
 
@@ -630,42 +574,9 @@ def reject_reply(mail_id):
     return redirect(url_for("dashboard"))
 
 
-@app.route("/send/<mail_id>", methods=["POST"])
-def send_reply(mail_id):
-    item = get_reply_by_id(mail_id)
-
-    if not item:
-        return redirect(url_for("dashboard"))
-
-    if item.get("status") not in {"approved", "send_failed"}:
-        return redirect(url_for("dashboard"))
-
-    try:
-        to_email = extract_reply_email(item["sender"])
-        if not to_email:
-            raise ValueError("Kunne ikke udlede modtagerens mailadresse")
-
-        send_email_reply(
-            to_email=to_email,
-            original_subject=item["subject"],
-            draft_reply=item["draft_reply"]
-        )
-
-        update_reply_status(
-            mail_id=mail_id,
-            new_status="sent",
-            send_error=None,
-            sent_at=datetime.utcnow().isoformat() + "Z"
-        )
-
-    except Exception as e:
-        update_reply_status(
-            mail_id=mail_id,
-            new_status="send_failed",
-            send_error=str(e),
-            sent_at=None
-        )
-
+@app.route("/archive/<mail_id>", methods=["POST"])
+def archive_reply(mail_id):
+    update_reply_status(mail_id, "archived")
     return redirect(url_for("dashboard"))
 
 
