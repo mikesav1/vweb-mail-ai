@@ -5,6 +5,7 @@ import time
 import json
 import threading
 import smtplib
+import ssl
 from datetime import datetime
 from email.header import decode_header
 from email.message import EmailMessage
@@ -23,7 +24,7 @@ STATE_FILE = "last_mail_id.txt"
 PENDING_REPLIES_FILE = "pending_replies.json"
 
 SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASS = os.getenv("SMTP_PASS")
 FROM_EMAIL = os.getenv("FROM_EMAIL", os.getenv("MAIL_USER", ""))
@@ -434,6 +435,13 @@ def send_email_reply(to_email, original_subject, draft_reply):
     if not SMTP_SERVER or not SMTP_USER or not SMTP_PASS or not FROM_EMAIL:
         raise ValueError("SMTP_SERVER, SMTP_USER, SMTP_PASS eller FROM_EMAIL mangler i Railway Variables")
 
+    print("SMTP_SERVER:", SMTP_SERVER)
+    print("SMTP_PORT:", SMTP_PORT)
+    print("SMTP_USER fundet:", bool(SMTP_USER))
+    print("SMTP_PASS fundet:", bool(SMTP_PASS))
+    print("FROM_EMAIL:", FROM_EMAIL)
+    print("Forsøger at sende til:", to_email)
+
     msg = EmailMessage()
     msg["From"] = FROM_EMAIL
     msg["To"] = to_email
@@ -445,10 +453,22 @@ def send_email_reply(to_email, original_subject, draft_reply):
 
     msg.set_content(draft_reply)
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
+    if SMTP_PORT == 465:
+        print("Bruger SMTP_SSL")
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=30, context=context) as server:
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+    else:
+        print("Bruger SMTP + STARTTLS")
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
+            server.ehlo()
+            server.starttls(context=ssl.create_default_context())
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+
+    print("MAIL SENDT OK")
 
 
 def extract_reply_email(sender):
@@ -617,7 +637,7 @@ def send_reply(mail_id):
     if not item:
         return redirect(url_for("dashboard"))
 
-    if item.get("status") != "approved":
+    if item.get("status") not in {"approved", "send_failed"}:
         return redirect(url_for("dashboard"))
 
     try:
