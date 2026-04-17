@@ -1,9 +1,10 @@
 import imaplib
 import email
+import os
 
 IMAP_SERVER = "imap.one.com"
-EMAIL = "ulla@vweb.info"
-PASSWORD = "qx3oi6a3*kose"
+EMAIL = os.getenv("MAIL_USER")
+PASSWORD = os.getenv("MAIL_PASS")
 
 def check_mail():
     mail = imaplib.IMAP4_SSL(IMAP_SERVER)
