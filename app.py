@@ -14,7 +14,7 @@ EMAIL_PASS = os.getenv("MAIL_PASS")
 
 def decode_mime_text(value):
     if not value:
-        return ""
+        return "(intet emne)"
 
     parts = decode_header(value)
     result = []
@@ -28,12 +28,40 @@ def decode_mime_text(value):
         else:
             result.append(part)
 
-    return "".join(result)
+    text = "".join(result).strip()
+    return text if text else "(intet emne)"
 
 
-def classify_mail(subject, sender):
+def get_plain_text_body(msg):
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition") or "")
+
+            if content_type == "text/plain" and "attachment" not in content_disposition.lower():
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or "utf-8"
+                    try:
+                        return payload.decode(charset, errors="replace").strip()
+                    except Exception:
+                        return payload.decode("utf-8", errors="replace").strip()
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            charset = msg.get_content_charset() or "utf-8"
+            try:
+                return payload.decode(charset, errors="replace").strip()
+            except Exception:
+                return payload.decode("utf-8", errors="replace").strip()
+
+    return ""
+
+
+def classify_mail(subject, sender, body):
     subject_l = subject.lower()
     sender_l = sender.lower()
+    body_l = body.lower()
 
     if "bekræft" in subject_l or "verify" in subject_l or "confirmation" in subject_l:
         return "vigtig"
@@ -46,6 +74,15 @@ def classify_mail(subject, sender):
 
     if subject_l.startswith("fwd:") or subject_l.startswith("fw:"):
         return "videresendt"
+
+    if "faktura" in subject_l or "betaling" in subject_l or "invoice" in subject_l:
+        return "vigtig"
+
+    if "ordre" in subject_l or "order" in subject_l:
+        return "vigtig"
+
+    if "hej" in body_l or "hello" in body_l or "kontakt" in body_l:
+        return "ukendt"
 
     return "ukendt"
 
@@ -81,13 +118,17 @@ def check_mail():
 
                 sender = decode_mime_text(msg.get("From"))
                 subject = decode_mime_text(msg.get("Subject"))
-                kategori = classify_mail(subject, sender)
+                body = get_plain_text_body(msg)
+
+                kategori = classify_mail(subject, sender, body)
 
                 if kategori in ["vigtig", "ukendt"]:
                     print("========================================")
                     print(f"KATEGORI: {kategori.upper()}")
                     print(f"Fra: {sender}")
                     print(f"Emne: {subject}")
+                    print("Indhold preview:")
+                    print(body[:300] if body else "(intet indhold fundet)")
                     print("========================================")
 
     mail.logout()
