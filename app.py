@@ -47,6 +47,19 @@ def get_plain_text_body(msg):
                         return payload.decode(charset, errors="replace").strip()
                     except Exception:
                         return payload.decode("utf-8", errors="replace").strip()
+
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition") or "")
+
+            if content_type == "text/html" and "attachment" not in content_disposition.lower():
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or "utf-8"
+                    try:
+                        return payload.decode(charset, errors="replace").strip()
+                    except Exception:
+                        return payload.decode("utf-8", errors="replace").strip()
     else:
         payload = msg.get_payload(decode=True)
         if payload:
@@ -56,7 +69,7 @@ def get_plain_text_body(msg):
             except Exception:
                 return payload.decode("utf-8", errors="replace").strip()
 
-    return ""
+    return "(intet indhold)"
 
 
 def get_last_mail_id():
@@ -84,7 +97,7 @@ def get_openai_client():
 
 def ai_analyze_email(sender, subject, body):
     client = get_openai_client()
-    body_preview = body[:4000] if body else ""
+    body_preview = body[:4000] if body else "(intet indhold)"
 
     prompt = f"""
 Du er en skarp mailassistent for en mindre dansk virksomhed.
@@ -121,8 +134,6 @@ Mailindhold:
     )
 
     result = response.output_text.strip()
-    print("AI RESULTAT:")
-    print(result)
     return result
 
 
@@ -192,7 +203,10 @@ def check_mail():
 
                 try:
                     ai_result = ai_analyze_email(sender, subject, body)
+                    print("AI RESULTAT:")
+                    print("=================================")
                     print(ai_result)
+                    print("=================================")
                 except Exception as ai_error:
                     print(f"AI-fejl: {ai_error}")
 
