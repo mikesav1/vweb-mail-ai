@@ -10,12 +10,6 @@ MAILBOX = "INBOX"
 CHECK_INTERVAL_SECONDS = 60
 STATE_FILE = "last_mail_id.txt"
 
-EMAIL_USER = os.getenv("MAIL_USER")
-EMAIL_PASS = os.getenv("MAIL_PASS")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
-
 
 def decode_mime_text(value):
     if not value:
@@ -51,20 +45,6 @@ def get_plain_text_body(msg):
                         return payload.decode(charset, errors="replace").strip()
                     except Exception:
                         return payload.decode("utf-8", errors="replace").strip()
-
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition") or "")
-
-            if content_type == "text/html" and "attachment" not in content_disposition.lower():
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    try:
-                        html_text = payload.decode(charset, errors="replace")
-                    except Exception:
-                        html_text = payload.decode("utf-8", errors="replace")
-                    return html_text.strip()
     else:
         payload = msg.get_payload(decode=True)
         if payload:
@@ -90,7 +70,18 @@ def save_last_mail_id(mail_id):
         f.write(str(mail_id))
 
 
+def get_openai_client():
+    api_key = os.getenv("OPENAI_API_KEY")
+    print("OPENAI_API_KEY fundet:", bool(api_key))
+
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY mangler i Railway Variables")
+
+    return OpenAI(api_key=api_key)
+
+
 def ai_analyze_email(sender, subject, body):
+    client = get_openai_client()
     body_preview = body[:4000] if body else ""
 
     prompt = f"""
@@ -134,17 +125,20 @@ def check_mail():
     print("Mail-bot starter...")
     print("Tjekker mail...")
 
-    if not EMAIL_USER or not EMAIL_PASS:
-        raise ValueError("MAIL_USER eller MAIL_PASS mangler i Railway Variables")
+    email_user = os.getenv("MAIL_USER")
+    email_pass = os.getenv("MAIL_PASS")
 
-    if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY mangler i Railway Variables")
+    print("MAIL_USER fundet:", bool(email_user))
+    print("MAIL_PASS fundet:", bool(email_pass))
+
+    if not email_user or not email_pass:
+        raise ValueError("MAIL_USER eller MAIL_PASS mangler i Railway Variables")
 
     last_seen = get_last_mail_id()
     print(f"Sidst behandlet ID: {last_seen}")
 
     mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-    mail.login(EMAIL_USER, EMAIL_PASS)
+    mail.login(email_user, email_pass)
     mail.select(MAILBOX)
 
     status, messages = mail.search(None, "ALL")
@@ -187,7 +181,7 @@ def check_mail():
                 print(f"Fra: {sender}")
                 print(f"Emne: {subject}")
                 print("Indhold preview:")
-                print((body[:500] if body else "(intet indhold)") )
+                print(body[:500] if body else "(intet indhold)")
                 print("----------------------------------------")
                 print("AI analyserer mailen...")
 
