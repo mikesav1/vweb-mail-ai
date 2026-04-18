@@ -497,7 +497,6 @@ def next_weekday_date(target_weekday: int) -> str:
     target = today + timedelta(days=days_ahead)
     return target.strftime("%d.%m.%Y")
 
-
 def build_date_hint(body: str) -> str:
     lower = body.lower()
 
@@ -1025,3 +1024,4 @@ if __name__ == "__main__":
     worker = threading.Thread(target=polling_loop, daemon=True)
     worker.start()
     app.run(host="0.0.0.0", port=PORT)
+
