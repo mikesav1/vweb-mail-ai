@@ -5,7 +5,8 @@ import time
 import sqlite3
 import threading
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from email.header import decode_header
 
 import resend
@@ -19,6 +20,7 @@ IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.one.com")
 MAILBOX = os.getenv("MAILBOX", "INBOX")
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "60"))
 PORT = int(os.getenv("PORT", "8080"))
+TIMEZONE_NAME = os.getenv("TIMEZONE_NAME", "Europe/Copenhagen")
 
 DB_PATH = os.getenv("DB_PATH", "mailbot.db")
 
@@ -500,6 +502,71 @@ def extract_first_name(sender):
     return first if first else "der"
 
 
+def get_local_now():
+    try:
+        return datetime.now(ZoneInfo(TIMEZONE_NAME))
+    except Exception:
+        return datetime.now()
+
+
+def format_danish_date(dt):
+    months = {
+        1: "januar", 2: "februar", 3: "marts", 4: "april", 5: "maj", 6: "juni",
+        7: "juli", 8: "august", 9: "september", 10: "oktober", 11: "november", 12: "december"
+    }
+    return f"{dt.day}. {months[dt.month]} {dt.year}"
+
+
+def get_next_week_saturday(base_dt):
+    weekday = base_dt.weekday()  # Monday=0
+    days_until_next_monday = 7 - weekday
+    next_week_monday = base_dt + timedelta(days=days_until_next_monday)
+    next_week_saturday = next_week_monday + timedelta(days=5)
+    return next_week_saturday
+
+
+def maybe_rule_based_reply(sender, subject, body):
+    first_name = extract_first_name(sender)
+    lower_body = body.lower()
+    lower_subject = subject.lower()
+
+    if "lørdag i næste uge" in lower_body or "lørdag i næste uge" in lower_subject:
+        saturday = get_next_week_saturday(get_local_now())
+        date_text = format_danish_date(saturday)
+        return {
+            "category": "kunde",
+            "requires_reply": "ja",
+            "summary": f"Spørgsmål om hvilken dato lørdag i næste uge falder på. Datoen er {date_text}.",
+            "draft_reply": f"Hej {first_name},\n\nLørdag i næste uge er den {date_text}. Passer det stadig for dig?\n\nMvh Kim Vase"
+        }
+
+    vinterguide_patterns = [
+        "hvad er vinterguide",
+        "hvad kan vinterguide",
+        "hvad bruges vinterguide til",
+        "hvad kan det bruges til",
+        "fortæl mig om vinterguide",
+        "hvad tænker på vinterguide",
+        "kan du forklare vinterguide",
+    ]
+
+    if any(pattern in lower_body for pattern in vinterguide_patterns) or any(pattern in lower_subject for pattern in vinterguide_patterns):
+        return {
+            "category": "kunde",
+            "requires_reply": "ja",
+            "summary": "Spørgsmål om hvad VinterGuide er og hvad systemet bruges til i praksis.",
+            "draft_reply": (
+                f"Hej {first_name},\n\n"
+                "VinterGuide er et system til at skabe overblik over vinterarbejdet i praksis. "
+                "Det kan bruges til planlægning, koordinering, dokumentation og opfølgning, så man lettere kan styre opgaverne i hverdagen.\n\n"
+                "Hvis du vil, kan jeg også forklare mere konkret hvordan det bruges i den daglige drift.\n\n"
+                "Mvh Kim Vase"
+            )
+        }
+
+    return None
+
+
 def get_last_mail_id():
     value = get_state("last_mail_id")
     if value is None:
@@ -648,6 +715,26 @@ def parse_ai_result(ai_text):
     return result
 
 
+def is_weak_reply(reply_text, first_name):
+    if not reply_text:
+        return True
+
+    text = reply_text.strip().lower()
+
+    weak_patterns = [
+        "jeg vender tilbage",
+        "mere præcist svar",
+        "med det samme",
+        "tak for din mail",
+    ]
+
+    if any(pattern in text for pattern in weak_patterns):
+        return True
+
+    stripped = text.replace(f"hej {first_name.lower()},", "").replace("mvh kim vase", "").strip()
+    return len(stripped) < 35
+
+
 def ai_analyze_email(sender, subject, body):
     client = get_openai_client()
     sender_first_name = extract_first_name(sender)
@@ -659,359 +746,7 @@ Du er en skarp mailassistent for virksomheden Vweb.
 Baggrund:
 - Vweb arbejder blandt andet med løsningen VinterGuide.
 - VinterGuide bruges til planlægning, overblik, dokumentation og daglig styring i praksis.
-- Svar skal være konkrete, hjælpsomme og menneskelige.
 - Du svarer som Kim Vase.
-- Modtageren skal tiltales korrekt ud fra afsenderens navn.
-- Hvis afsenderen hedder Kim, skal svaret begynde med "Hej Kim,"
-- Du må ikke forveksle afsender med virksomhedens egne navne fra gamle mails eller signaturer.
-
-Vigtige regler:
-- Du må gerne klassificere hårdt og ærligt.
-- "no-reply", betalingsfejl, verifikationsmails, systemmails og abonnementsmails er typisk "automatisk".
-- Nyhedsbreve, kampagner og information uden reel dialog er typisk "nyhedsbrev".
-- Spam og åbenlyst irrelevant indhold er "spam".
-- Kundemails og menneskelige henvendelser er "kunde" eller "vigtig".
-- Svarudkast skal KUN laves hvis mailen reelt kræver svar.
-- Svarudkast må ikke lyde som AI.
-- Svarudkast skal være kort, naturligt og direkte.
-- Ingen punktopstilling i selve svarudkastet.
-- Svarudkast må ALDRIG indeholde pladsholdere som [Dit navn], [Navn], [Firmanavn] eller lignende.
-- Svarudkast skal afsluttes med: "Mvh Kim Vase"
-- Svarudkast skal normalt have denne struktur:
-
-  Hej {sender_first_name},
-
-  <selve svaret>
-
-  Mvh Kim Vase
-
-- Hvis spørgsmålet handler om VinterGuide, så svar kort og konkret på det der faktisk bliver spurgt om.
-- Hvis der ikke skal svares, skriv "intet".
-
-Returnér KUN i dette format:
-
-KATEGORI: <spam|nyhedsbrev|automatisk|kunde|vigtig|ukendt>
-KRÆVER_SVAR: <ja|nej>
-RESUMÉ: <kort opsummering>
-SVARUDKAST: <kort svar på dansk, eller skriv "intet">
-
-Afsender:
-{sender}
-
-Emne:
-{subject}
-
-Renset mailindhold:
-{body_preview}
-""".strip()
-
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input=prompt
-    )
-
-    return response.output_text.strip()
-
-
-def normalize_draft_reply(draft_reply, sender):
-    if not draft_reply:
-        return ""
-
-    text = draft_reply.strip()
-    first_name = extract_first_name(sender)
-
-    replacements = {
-        "Mvh [Dit navn]": "Mvh Kim Vase",
-        "Mvh [dit navn]": "Mvh Kim Vase",
-        "Med venlig hilsen [Dit navn]": "Mvh Kim Vase",
-        "Med venlig hilsen [dit navn]": "Mvh Kim Vase",
-        "[Dit navn]": "Kim Vase",
-        "[dit navn]": "Kim Vase",
-        "Hej Ulla,": f"Hej {first_name},",
-        "Hej ulla,": f"Hej {first_name},",
-        "Hej Mailbot,": f"Hej {first_name},",
-    }
-
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
-    text = re.sub(r"^Hej\s+[^,\n]+,", f"Hej {first_name},", text, count=1, flags=re.IGNORECASE)
-
-    if text.startswith(f"Hej {first_name},") and "\n\n" not in text:
-        text = text.replace(f"Hej {first_name},", f"Hej {first_name},\n\n", 1)
-
-    # fjern tomme eller alt for korte svar
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    content_lines = [line for line in lines if line.lower() != f"hej {first_name.lower()}," and line.lower() != "mvh kim vase"]
-
-    if len(" ".join(content_lines).strip()) < 20:
-        text = f"Hej {first_name},\n\nTak for din mail. Jeg vender tilbage med et mere præcist svar om det med det samme.\n\nMvh Kim Vase"
-
-    if "Mvh Kim Vase" not in text:
-        text = text.rstrip() + "\n\nMvh Kim Vase"
-
-    return text
-
-
-def send_via_resend(to_email, original_subject, draft_reply, sender):
-    if not RESEND_API_KEY:
-        raise ValueError("RESEND_API_KEY mangler i Railway Variables")
-
-    if not AI_FROM_EMAIL:
-        raise ValueError("AI_FROM_EMAIL mangler i Railway Variables")
-
-    resend.api_key = RESEND_API_KEY
-
-    if original_subject.lower().startswith("re:"):
-        subject = original_subject
-    else:
-        subject = f"Re: {original_subject}"
-
-    draft_reply = normalize_draft_reply(draft_reply, sender)
-
-    signature_html = """
-    <br><br>
-    <hr style="border:none;border-top:1px solid #ddd;">
-    <table style="font-family: Arial, sans-serif; font-size:14px; color:#222;">
-      <tr>
-        <td style="padding-right:15px; vertical-align:top;">
-          <a href="https://vweb.info" target="_blank">
-            <img src="https://vweb.info/images/vweb-logo.svg" alt="Vweb logo" width="150">
-          </a>
-        </td>
-        <td style="vertical-align:top;">
-          <b>Ulla Vase</b><br>
-          Syrenvej 5<br>
-          7200 Grindsted<br>
-          Tlf.: 91 83 07 25<br>
-          E-mail: <a href="mailto:ulla@vweb.info">ulla@vweb.info</a>
-        </td>
-      </tr>
-    </table>
-    """
-
-    html = f"<p>{draft_reply.replace(chr(10), '<br>')}</p>{signature_html}"
-
-    params = {
-        "from": AI_FROM_EMAIL,
-        "to": [to_email],
-        "subject": subject,
-        "html": html
-    }
-
-    result = resend.Emails.send(params)
-    return result
-
-
-def extract_reply_email(sender):
-    parsed = email.utils.parseaddr(sender)
-    return parsed[1]
-
-
-def check_mail():
-    print("Mail-bot starter...")
-    print("Tjekker mail...")
-
-    email_user = os.getenv("MAIL_USER")
-    email_pass = os.getenv("MAIL_PASS")
-
-    print("MAIL_USER fundet:", bool(email_user))
-    print("MAIL_PASS fundet:", bool(email_pass))
-
-    if not email_user or not email_pass:
-        raise ValueError("MAIL_USER eller MAIL_PASS mangler i Railway Variables")
-
-    last_seen = get_last_mail_id()
-
-    mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-    mail.login(email_user, email_pass)
-    mail.select(MAILBOX)
-
-    status, messages = mail.search(None, "ALL")
-    if status != "OK":
-        print("Kunne ikke hente mails")
-        mail.logout()
-        return
-
-    mail_ids = messages[0].split()
-
-    if not mail_ids:
-        print("Ingen mails fundet")
-        mail.logout()
-        return
-
-    newest_id = int(mail_ids[-1])
-    print(f"Nyeste mail ID: {newest_id}")
-
-    if last_seen is None:
-        print("Ingen tidligere state fundet. Springer gamle mails over første gang.")
-        save_last_mail_id(newest_id)
-        mail.logout()
-        return
-
-    print(f"Sidst behandlet ID: {last_seen}")
-
-    for mail_id in mail_ids:
-        mail_id_int = int(mail_id)
-
-        if mail_id_int <= last_seen:
-            continue
-
-        status, msg_data = mail.fetch(mail_id, "(RFC822)")
-        if status != "OK":
-            print(f"Kunne ikke hente mail {mail_id_int}")
-            continue
-
-        for response_part in msg_data:
-            if not isinstance(response_part, tuple):
-                continue
-
-            msg = email.message_from_bytes(response_part[1])
-
-            sender = decode_mime_text(msg.get("From"))
-            subject = decode_mime_text(msg.get("Subject"))
-            full_body = get_plain_text_body(msg)
-            cleaned_body = strip_quoted_text(full_body)
-
-            print("========================================")
-            print(f"NY MAIL (ID {mail_id_int})")
-            print(f"Fra: {sender}")
-            print(f"Emne: {subject}")
-            print("Renset indhold preview:")
-            print(cleaned_body[:600] if cleaned_body else "(intet indhold)")
-            print("----------------------------------------")
-            print("AI analyserer mailen...")
-
-            try:
-                ai_result = ai_analyze_email(sender, subject, cleaned_body)
-                parsed = parse_ai_result(ai_result)
-
-                print("AI RESULTAT:")
-                print("=================================")
-                print(ai_result)
-                print("=================================")
-
-                category = parsed["category"]
-                requires_reply = parsed["requires_reply"]
-                summary = parsed["summary"]
-                draft_reply = parsed["draft_reply"]
-
-                if category in REPLY_CATEGORIES and requires_reply == "ja" and draft_reply.lower() != "intet":
-                    save_pending_reply(
-                        mail_id=mail_id_int,
-                        sender=sender,
-                        subject=subject,
-                        category=category,
-                        summary=summary,
-                        reply_needed=requires_reply,
-                        draft_reply=draft_reply,
-                        original_preview=cleaned_body
-                    )
-                    print("SVARUDKAST GEMT TIL GODKENDELSE")
-                else:
-                    print("INGEN SVAR GEMT")
-
-            except Exception as ai_error:
-                print(f"AI-fejl: {ai_error}")
-
-            print("========================================")
-
-    save_last_mail_id(newest_id)
-    mail.logout()
-
-
-def polling_loop():
-    while True:
-        try:
-            check_mail()
-        except Exception as e:
-            print(f"Fejl: {e}")
-
-        print(f"Venter {CHECK_INTERVAL_SECONDS} sekunder...")
-        time.sleep(CHECK_INTERVAL_SECONDS)
-
-
-@app.route("/")
-def dashboard():
-    active_items = load_replies_by_status(["pending_approval", "approved_api", "send_failed"])
-    history_items = load_replies_by_status(["sent", "rejected", "archived"])
-    counts = get_counts()
-
-    return render_template_string(
-        HTML_TEMPLATE,
-        active_items=active_items,
-        history_items=history_items,
-        pending_count=counts["pending_approval"],
-        approved_count=counts["approved_api"],
-        sent_count=counts["sent"],
-        rejected_count=counts["rejected"],
-        archived_count=counts["archived"]
-    )
-
-
-@app.route("/approve/<mail_id>", methods=["POST"])
-def approve_reply(mail_id):
-    update_reply_status(mail_id, "approved_api")
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/reject/<mail_id>", methods=["POST"])
-def reject_reply(mail_id):
-    update_reply_status(mail_id, "rejected")
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/archive/<mail_id>", methods=["POST"])
-def archive_reply(mail_id):
-    update_reply_status(mail_id, "archived")
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/send/<mail_id>", methods=["POST"])
-def send_reply(mail_id):
-    item = get_reply_by_id(mail_id)
-
-    if not item:
-        return redirect(url_for("dashboard"))
-
-    if item.get("status") not in {"approved_api", "send_failed"}:
-        return redirect(url_for("dashboard"))
-
-    try:
-        to_email = extract_reply_email(item["sender"])
-        if not to_email:
-            raise ValueError("Kunne ikke udlede modtagerens mailadresse")
-
-        result = send_via_resend(
-            to_email=to_email,
-            original_subject=item["subject"],
-            draft_reply=item["draft_reply"],
-            sender=item["sender"]
-        )
-
-        update_reply_status(
-            mail_id=mail_id,
-            new_status="sent",
-            send_error=None,
-            sent_at=datetime.utcnow().isoformat() + "Z"
-        )
-
-        print("RESEND RESULT:", result)
-
-    except Exception as e:
-        update_reply_status(
-            mail_id=mail_id,
-            new_status="send_failed",
-            send_error=str(e),
-            sent_at=None
-        )
-
-    return redirect(url_for("dashboard"))
-
-
-if __name__ == "__main__":
-    init_db()
-    print("KALDER CHECK_MAIL / STARTER WEB")
-    worker = threading.Thread(target=polling_loop, daemon=True)
-    worker.start()
-    app.run(host="0.0.0.0", port=PORT)
+- Svar skal være konkrete, hjælpsomme og menneskelige.
+- Hvis modtageren hedder Kim, skal svaret starte med "Hej Kim,"
+- Du må ikke
