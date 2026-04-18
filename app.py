@@ -2,7 +2,7 @@ import imaplib
 import email
 import os
 import time
-import json
+import sqlite3
 import threading
 from datetime import datetime
 from email.header import decode_header
@@ -17,10 +17,9 @@ print("APP STARTER NU!!!")
 IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.one.com")
 MAILBOX = os.getenv("MAILBOX", "INBOX")
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "60"))
-
-STATE_FILE = "last_mail_id.txt"
-PENDING_REPLIES_FILE = "pending_replies.json"
 PORT = int(os.getenv("PORT", "8080"))
+
+DB_PATH = os.getenv("DB_PATH", "mailbot.db")
 
 REPLY_CATEGORIES = {"kunde", "vigtig", "ukendt"}
 
@@ -35,6 +34,7 @@ HTML_TEMPLATE = """
 <html lang="da">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="refresh" content="10">
   <title>Mailbot godkendelse</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
@@ -121,7 +121,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
   <h1>Mailbot godkendelse</h1>
-  <div class="muted">Godkend først. Send bagefter. Ingen mail sendes automatisk.</div>
+  <div class="muted">Godkend først. Send bagefter. Siden opdaterer automatisk hvert 10. sekund.</div>
 
   <div class="topbar">
     <div class="summary">Afventer: <strong>{{ pending_count }}</strong></div>
@@ -209,6 +209,69 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS replies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mail_id TEXT UNIQUE,
+                saved_at TEXT,
+                sender TEXT,
+                subject TEXT,
+                category TEXT,
+                requires_reply TEXT,
+                summary TEXT,
+                draft_reply TEXT,
+                original_preview TEXT,
+                status TEXT,
+                sent_at TEXT,
+                send_error TEXT
+            )
+        """)
+
+        conn.commit()
+        conn.close()
+
+
+def get_state(key):
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM app_state WHERE key = ?", (key,))
+        row = cur.fetchone()
+        conn.close()
+        return row["value"] if row else None
+
+
+def set_state(key, value):
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO app_state (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (key, str(value)))
+        conn.commit()
+        conn.close()
 
 
 def decode_mime_text(value):
@@ -305,91 +368,118 @@ def get_plain_text_body(msg):
 
 
 def get_last_mail_id():
-    with file_lock:
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return int(f.read().strip())
-        except Exception:
-            return None
+    value = get_state("last_mail_id")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 
 def save_last_mail_id(mail_id):
-    with file_lock:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            f.write(str(mail_id))
+    set_state("last_mail_id", mail_id)
 
 
 def load_pending_replies():
     with file_lock:
-        try:
-            with open(PENDING_REPLIES_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-
-
-def save_pending_replies(data):
-    with file_lock:
-        with open(PENDING_REPLIES_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT mail_id, saved_at, sender, subject, category, requires_reply,
+                   summary, draft_reply, original_preview, status, sent_at, send_error
+            FROM replies
+            ORDER BY
+              CASE WHEN status = 'pending_approval' THEN 0 ELSE 1 END,
+              datetime(saved_at) DESC
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
 
 
 def already_saved_reply(mail_id):
-    pending = load_pending_replies()
-    return any(str(item.get("mail_id")) == str(mail_id) for item in pending)
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM replies WHERE mail_id = ?", (str(mail_id),))
+        row = cur.fetchone()
+        conn.close()
+        return row is not None
 
 
 def save_pending_reply(mail_id, sender, subject, category, summary, reply_needed, draft_reply, original_preview):
     if already_saved_reply(mail_id):
         return
 
-    pending = load_pending_replies()
-
-    pending.append(
-        {
-            "saved_at": datetime.utcnow().isoformat() + "Z",
-            "mail_id": str(mail_id),
-            "sender": sender,
-            "subject": subject,
-            "category": category,
-            "requires_reply": reply_needed,
-            "summary": summary,
-            "draft_reply": draft_reply,
-            "original_preview": original_preview[:1500],
-            "status": "pending_approval",
-            "sent_at": None,
-            "send_error": None
-        }
-    )
-
-    save_pending_replies(pending)
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO replies (
+                mail_id, saved_at, sender, subject, category, requires_reply,
+                summary, draft_reply, original_preview, status, sent_at, send_error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(mail_id),
+            datetime.utcnow().isoformat() + "Z",
+            sender,
+            subject,
+            category,
+            reply_needed,
+            summary,
+            draft_reply,
+            original_preview[:1500],
+            "pending_approval",
+            None,
+            None
+        ))
+        conn.commit()
+        conn.close()
 
 
 def update_reply_status(mail_id, new_status, send_error=None, sent_at=None):
-    items = load_pending_replies()
-    updated = False
-
-    for item in items:
-        if str(item.get("mail_id")) == str(mail_id):
-            item["status"] = new_status
-            item["send_error"] = send_error
-            if sent_at:
-                item["sent_at"] = sent_at
-            updated = True
-            break
-
-    if updated:
-        save_pending_replies(items)
-
-    return updated
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE replies
+            SET status = ?, send_error = ?, sent_at = ?
+            WHERE mail_id = ?
+        """, (new_status, send_error, sent_at, str(mail_id)))
+        updated = cur.rowcount > 0
+        conn.commit()
+        conn.close()
+        return updated
 
 
 def get_reply_by_id(mail_id):
-    items = load_pending_replies()
-    for item in items:
-        if str(item.get("mail_id")) == str(mail_id):
-            return item
-    return None
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT mail_id, saved_at, sender, subject, category, requires_reply,
+                   summary, draft_reply, original_preview, status, sent_at, send_error
+            FROM replies
+            WHERE mail_id = ?
+        """, (str(mail_id),))
+        row = cur.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+
+def get_counts():
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        counts = {}
+        for status in ["pending_approval", "approved_api", "sent", "rejected", "archived"]:
+            cur.execute("SELECT COUNT(*) AS c FROM replies WHERE status = ?", (status,))
+            counts[status] = cur.fetchone()["c"]
+
+        conn.close()
+        return counts
 
 
 def get_openai_client():
@@ -488,17 +578,17 @@ def send_via_resend(to_email, original_subject, draft_reply):
     <hr style="border:none;border-top:1px solid #ddd;">
     <table style="font-family: Arial, sans-serif; font-size:14px; color:#222;">
       <tr>
-        <td style="padding-right:15px; vertical-align:center;">
+        <td style="padding-right:15px; vertical-align:top;">
           <a href="https://vweb.info" target="_blank">
-            <img src="https://vweb.info/images/vweb-logo.svg" alt="Vweb logo" width="120">
+            <img src="https://vweb.info/images/vweb-logo.svg" alt="Vweb logo" width="150">
           </a>
         </td>
         <td style="vertical-align:top;">
           <b>Ulla Vase</b><br>
-          Syrenvej 5 <br>
+          Syrenvej 5<br>
           7200 Grindsted<br>
           Tlf.: 91 83 07 25<br>
-          Email: ulla@vweb.info
+          E-mail: <a href="mailto:ulla@vweb.info">ulla@vweb.info</a>
         </td>
       </tr>
     </table>
@@ -647,22 +737,16 @@ def polling_loop():
 @app.route("/")
 def dashboard():
     items = load_pending_replies()
-    items = sorted(items, key=lambda x: (x.get("status") != "pending_approval", x.get("saved_at", "")))
-
-    pending_count = sum(1 for i in items if i.get("status") == "pending_approval")
-    approved_count = sum(1 for i in items if i.get("status") == "approved_api")
-    sent_count = sum(1 for i in items if i.get("status") == "sent")
-    rejected_count = sum(1 for i in items if i.get("status") == "rejected")
-    archived_count = sum(1 for i in items if i.get("status") == "archived")
+    counts = get_counts()
 
     return render_template_string(
         HTML_TEMPLATE,
         items=items,
-        pending_count=pending_count,
-        approved_count=approved_count,
-        sent_count=sent_count,
-        rejected_count=rejected_count,
-        archived_count=archived_count
+        pending_count=counts["pending_approval"],
+        approved_count=counts["approved_api"],
+        sent_count=counts["sent"],
+        rejected_count=counts["rejected"],
+        archived_count=counts["archived"]
     )
 
 
@@ -726,6 +810,7 @@ def send_reply(mail_id):
 
 
 if __name__ == "__main__":
+    init_db()
     print("KALDER CHECK_MAIL / STARTER WEB")
     worker = threading.Thread(target=polling_loop, daemon=True)
     worker.start()
