@@ -11,7 +11,7 @@ from email.header import decode_header
 import resend
 from openai import OpenAI
 from bs4 import BeautifulSoup
-from flask import Flask, redirect, render_template_string, url_for
+from flask import Flask, redirect, render_template_string, url_for, request
 
 print("APP STARTER NU!!!")
 
@@ -26,6 +26,10 @@ REPLY_CATEGORIES = {"kunde", "vigtig", "ukendt"}
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 AI_FROM_EMAIL = os.getenv("AI_FROM_EMAIL")
+MAIL_USER = os.getenv("MAIL_USER", "")
+COMPANY_CONTEXT_FILE = os.getenv("COMPANY_CONTEXT_FILE", "company_context.txt")
+PRODUCT_VINTERGUIDE_FILE = os.getenv("PRODUCT_VINTERGUIDE_FILE", "product_vinterguide.txt")
+PRODUCT_SLUSHBOOK_FILE = os.getenv("PRODUCT_SLUSHBOOK_FILE", "product_slushbook.txt")
 
 file_lock = threading.Lock()
 app = Flask(__name__)
@@ -81,6 +85,7 @@ HTML_TEMPLATE = """
     .archive { background: #475569; color: white; }
     .send { background: #059669; color: white; }
     .retry { background: #ea580c; color: white; }
+    .save { background: #0f766e; color: white; }
     .disabled { background: #94a3b8; color: white; cursor: not-allowed; }
     pre {
       background: #f8fafc;
@@ -90,6 +95,17 @@ HTML_TEMPLATE = """
       border: 1px solid #e2e8f0;
       overflow-x: auto;
       margin-top: 6px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 170px;
+      font-family: Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.45;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+      box-sizing: border-box;
     }
     .topbar {
       display: flex;
@@ -144,6 +160,8 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="row"><span class="label">Fra:</span> {{ item.sender }}</div>
+        <div class="row"><span class="label">Til:</span> {{ item.recipient }}</div>
+        <div class="row"><span class="label">Produktkontekst:</span> {{ item.product_context }}</div>
         <div class="row"><span class="label">Emne:</span> {{ item.subject }}</div>
         <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
         <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
@@ -152,7 +170,12 @@ HTML_TEMPLATE = """
         <pre>{{ item.original_preview }}</pre>
 
         <div class="row"><span class="label">Svarudkast:</span></div>
-        <pre>{{ item.draft_reply }}</pre>
+        <form method="post" action="{{ url_for('update_draft', mail_id=item.mail_id) }}">
+          <textarea name="draft_reply">{{ item.draft_reply }}</textarea>
+          <div class="actions">
+            <button class="save" type="submit">Gem ændringer</button>
+          </div>
+        </form>
 
         {% if item.sent_at %}
           <div class="row"><span class="label">Sendt:</span> {{ item.sent_at }}</div>
@@ -160,12 +183,6 @@ HTML_TEMPLATE = """
 
         {% if item.send_error %}
           <div class="row"><span class="label">Sendefejl:</span> {{ item.send_error }}</div>
-        {% endif %}
-
-        {% if item.status == "approved_api" %}
-          <div class="copybox">
-            Dette svar er godkendt og klar til afsendelse.
-          </div>
         {% endif %}
 
         <div class="actions">
@@ -218,6 +235,8 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="row"><span class="label">Fra:</span> {{ item.sender }}</div>
+        <div class="row"><span class="label">Til:</span> {{ item.recipient }}</div>
+        <div class="row"><span class="label">Produktkontekst:</span> {{ item.product_context }}</div>
         <div class="row"><span class="label">Emne:</span> {{ item.subject }}</div>
         <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
         <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
@@ -269,6 +288,8 @@ def init_db():
                 mail_id TEXT UNIQUE,
                 saved_at TEXT,
                 sender TEXT,
+                recipient TEXT,
+                product_context TEXT,
                 subject TEXT,
                 category TEXT,
                 requires_reply TEXT,
@@ -283,6 +304,48 @@ def init_db():
 
         conn.commit()
         conn.close()
+
+
+def ensure_replies_columns():
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(replies)")
+        columns = [row["name"] for row in cur.fetchall()]
+
+        if "recipient" not in columns:
+            cur.execute("ALTER TABLE replies ADD COLUMN recipient TEXT")
+        if "product_context" not in columns:
+            cur.execute("ALTER TABLE replies ADD COLUMN product_context TEXT")
+
+        conn.commit()
+        conn.close()
+
+
+def read_text_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def get_company_context():
+    return read_text_file(COMPANY_CONTEXT_FILE)
+
+
+def get_product_context(recipient, subject, body):
+    recipient_l = (recipient or "").lower()
+    subject_l = (subject or "").lower()
+    body_l = (body or "").lower()
+
+    if "@vinterguide.dk" in recipient_l or "vinterguide" in recipient_l or "vinterguide" in subject_l or "vinterguide" in body_l:
+        return "vinterguide", read_text_file(PRODUCT_VINTERGUIDE_FILE)
+
+    if "@slushbook" in recipient_l or "slushbook" in recipient_l or "slushbook" in subject_l or "slushbook" in body_l:
+        return "slushbook", read_text_file(PRODUCT_SLUSHBOOK_FILE)
+
+    return "vweb", ""
 
 
 def get_state(key):
@@ -489,6 +552,17 @@ def extract_first_name(sender):
     return first if first else "der"
 
 
+def extract_recipient(msg):
+    for header_name in ["Delivered-To", "Envelope-To", "X-Original-To", "To"]:
+        value = msg.get(header_name)
+        if value:
+            decoded = decode_mime_text(value)
+            _, addr = email.utils.parseaddr(decoded)
+            if addr:
+                return addr
+    return MAIL_USER
+
+
 def next_weekday_date(target_weekday: int) -> str:
     today = datetime.now().date()
     days_ahead = target_weekday - today.weekday()
@@ -499,7 +573,7 @@ def next_weekday_date(target_weekday: int) -> str:
 
 
 def build_date_hint(body: str) -> str:
-    lower = body.lower()
+    lower = (body or "").lower()
 
     if "lørdag i næste uge" in lower:
         return f"Lørdag i næste uge er den {next_weekday_date(5)}."
@@ -539,7 +613,7 @@ def load_replies_by_status(statuses):
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(f"""
-            SELECT mail_id, saved_at, sender, subject, category, requires_reply,
+            SELECT mail_id, saved_at, sender, recipient, product_context, subject, category, requires_reply,
                    summary, draft_reply, original_preview, status, sent_at, send_error
             FROM replies
             WHERE status IN ({placeholders})
@@ -560,7 +634,7 @@ def already_saved_reply(mail_id):
         return row is not None
 
 
-def save_pending_reply(mail_id, sender, subject, category, summary, reply_needed, draft_reply, original_preview):
+def save_pending_reply(mail_id, sender, recipient, product_context, subject, category, summary, reply_needed, draft_reply, original_preview):
     if already_saved_reply(mail_id):
         return
 
@@ -569,13 +643,15 @@ def save_pending_reply(mail_id, sender, subject, category, summary, reply_needed
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO replies (
-                mail_id, saved_at, sender, subject, category, requires_reply,
+                mail_id, saved_at, sender, recipient, product_context, subject, category, requires_reply,
                 summary, draft_reply, original_preview, status, sent_at, send_error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             str(mail_id),
             datetime.utcnow().isoformat() + "Z",
             sender,
+            recipient,
+            product_context,
             subject,
             category,
             reply_needed,
@@ -605,12 +681,21 @@ def update_reply_status(mail_id, new_status, send_error=None, sent_at=None):
         return updated
 
 
+def update_reply_text(mail_id, new_text):
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE replies SET draft_reply = ? WHERE mail_id = ?", (new_text, str(mail_id)))
+        conn.commit()
+        conn.close()
+
+
 def get_reply_by_id(mail_id):
     with file_lock:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT mail_id, saved_at, sender, subject, category, requires_reply,
+            SELECT mail_id, saved_at, sender, recipient, product_context, subject, category, requires_reply,
                    summary, draft_reply, original_preview, status, sent_at, send_error
             FROM replies
             WHERE mail_id = ?
@@ -624,23 +709,18 @@ def get_counts():
     with file_lock:
         conn = get_db_connection()
         cur = conn.cursor()
-
         counts = {}
         for status in ["pending_approval", "approved_api", "sent", "rejected", "archived"]:
             cur.execute("SELECT COUNT(*) AS c FROM replies WHERE status = ?", (status,))
             counts[status] = cur.fetchone()["c"]
-
         conn.close()
         return counts
 
 
 def get_openai_client():
     api_key = os.getenv("OPENAI_API_KEY")
-    print("OPENAI_API_KEY fundet:", bool(api_key))
-
     if not api_key:
         raise ValueError("OPENAI_API_KEY mangler i Railway Variables")
-
     return OpenAI(api_key=api_key)
 
 
@@ -654,7 +734,6 @@ def parse_ai_result(ai_text):
 
     for line in ai_text.splitlines():
         line = line.strip()
-
         if line.upper().startswith("KATEGORI:"):
             result["category"] = line.split(":", 1)[1].strip().lower()
         elif line.upper().startswith("KRÆVER_SVAR:"):
@@ -667,18 +746,25 @@ def parse_ai_result(ai_text):
     return result
 
 
-def ai_analyze_email(sender, subject, body):
+def ai_analyze_email(sender, recipient, subject, body):
     client = get_openai_client()
     sender_first_name = extract_first_name(sender)
     date_hint = build_date_hint(body)
     body_preview = body[:5000] if body else "(intet indhold)"
+    company_context = get_company_context()
+    product_key, product_context = get_product_context(recipient, subject, body)
 
     prompt = f"""
 Du er en skarp mailassistent for virksomheden Vweb.
 
+Overordnet virksomhedskontekst:
+{company_context if company_context else 'Ingen company_context.txt fundet.'}
+
+Aktiv produktkontekst:
+Produktnøgle: {product_key}
+{product_context if product_context else 'Ingen specifik produktkontekst fundet. Brug kun virksomhedskontekst.'}
+
 Baggrund:
-- Vweb arbejder blandt andet med løsningen VinterGuide.
-- VinterGuide bruges til planlægning, overblik, dokumentation og daglig styring i praksis.
 - Du svarer som Kim Vase.
 - Svar skal være konkrete, hjælpsomme, menneskelige og direkte.
 - Du skal bruge det faktiske spørgsmål i mailen aktivt og svare på det, ikke bare skrive et standardsvar.
@@ -687,28 +773,26 @@ Vigtige regler:
 - Hvis afsenderen hedder Kim, skal svaret begynde med "Hej Kim,"
 - Du må ikke forveksle afsender med egne navne fra gamle mails eller signaturer.
 - Hvis mailen indeholder et konkret spørgsmål, skal du forsøge at give et konkret svar.
-- Brug kun fallback-svar som "jeg vender tilbage" hvis du reelt mangler oplysninger.
+- Brug kun fallback-svar hvis du reelt mangler oplysninger.
 - Hvis der spørges om datoer eller dage, og du har et hjælpespor, så brug det.
+- Hvis der i produktkonteksten findes konkrete priser, SKAL du skrive de konkrete priser direkte i svaret.
+- Du må IKKE nøjes med at henvise til hjemmesiden, hvis priserne allerede findes i produktkonteksten.
+- Du må ALDRIG opfinde eller gætte priser.
+- Du må KUN bruge priser fra produktkonteksten.
+- Hvis kunden spørger om pris eller platforme, skal du nævne Starter, Pro og Business med de konkrete tal, hvis de findes.
+- Når du skriver priser, SKAL du skrive "kr pr. bruger pr. måned".
+- Du SKAL skrive at der betales for et år ad gangen, hvis det fremgår af produktkonteksten.
+- Du SKAL inkludere linket https://vinterguide.dk/intro.html#priser når der spørges om priser på VinterGuide.
+- Du SKAL lave linjeskift mellem afsnit, så svaret ikke bliver klumpet.
 - Svarudkast må ikke lyde som AI.
 - Svarudkast skal være kort, naturligt og direkte.
-- Ingen punktopstilling i selve svarudkastet.
+- Ingen punktopstilling med stjerner i selve mailsvaret.
 - Svarudkast må ALDRIG indeholde pladsholdere som [Dit navn], [Navn], [Firmanavn] eller lignende.
 - Svarudkast skal afsluttes med: "Mvh Kim Vase"
 - Hvis der ikke skal svares, skriv "intet".
-- Hvis der i produktkonteksten findes konkrete priser, SKAL du skrive de konkrete priser direkte i svaret.
-- Du må IKKE nøjes med at henvise til hjemmesiden, hvis priserne allerede findes i produktkonteksten.
-- Hvis kunden spørger om pris eller platforme, skal du nævne Starter, Pro og Business med de konkrete tal.
-- Du må ALDRIG opfinde eller gætte priser.
-- Du må KUN bruge priser fra produktkonteksten.
-- Hvis priser ikke findes, skriv "jeg har ikke de konkrete priser lige nu".
-- Når du skriver priser, SKAL du skrive:
-  "kr pr. bruger pr. måned"
-- Du SKAL skrive at der betales årligt.
-- Du SKAL inkludere link:
-  https://vinterguide.dk/intro.html#priser
-- Du SKAL lave linjeskift mellem afsnit.
+
 Hjælpespor:
-{date_hint if date_hint else "Ingen særlige dato-hints."}
+{date_hint if date_hint else 'Ingen særlige dato-hints.'}
 
 Returnér KUN i dette format:
 
@@ -719,6 +803,9 @@ SVARUDKAST: <kort svar på dansk, eller skriv "intet">
 
 Afsender:
 {sender}
+
+Sendt til:
+{recipient}
 
 Emne:
 {subject}
@@ -732,10 +819,10 @@ Renset mailindhold:
         input=prompt
     )
 
-    return response.output_text.strip()
+    return response.output_text.strip(), product_key
 
 
-def normalize_draft_reply(draft_reply, sender):
+def normalize_draft_reply(draft_reply, sender, subject, product_context):
     if not draft_reply:
         return ""
 
@@ -753,31 +840,42 @@ def normalize_draft_reply(draft_reply, sender):
         "Hej ulla,": f"Hej {first_name},",
         "Hej Mailbot,": f"Hej {first_name},",
     }
-
     for old, new in replacements.items():
         text = text.replace(old, new)
 
     text = re.sub(r"^Hej\s+[^,\n]+,", f"Hej {first_name},", text, count=1, flags=re.IGNORECASE)
 
-    if text.startswith(f"Hej {first_name},") and "\n\n" not in text:
-        text = text.replace(f"Hej {first_name},", f"Hej {first_name},\n\n", 1)
+    if not text.startswith(f"Hej {first_name},"):
+        text = f"Hej {first_name},\n\n" + text
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    content_lines = [line for line in lines if line.lower() not in {f"hej {first_name.lower()},", "mvh kim vase"}]
+    if subject and "pris" in subject.lower() and product_context == "vinterguide":
+        if "129 kr" not in text and "179 kr" not in text and "229 kr" not in text:
+            text = (
+                f"Hej {first_name},\n\n"
+                "VinterGuide findes i tre løsninger:\n\n"
+                "Starter: 129 kr pr. bruger pr. måned, minimum 5 brugere, svarende til 7.740 kr pr. år.\n\n"
+                "Pro: 179 kr pr. bruger pr. måned, minimum 10 brugere, svarende til 21.480 kr pr. år.\n\n"
+                "Business: 229 kr pr. bruger pr. måned, minimum 20 brugere, svarende til 54.960 kr pr. år.\n\n"
+                "Der betales for et år ad gangen.\n\n"
+                "Du kan læse mere her:\nhttps://vinterguide.dk/intro.html#priser\n\n"
+                "Mvh Kim Vase"
+            )
+            return text
 
-    if len(" ".join(content_lines).strip()) < 20:
-        text = f"Hej {first_name},\n\nTak for din mail. Jeg vender tilbage med et mere præcist svar om det med det samme.\n\nMvh Kim Vase"
+    text = re.sub(r"\s+Mvh Kim Vase$", "\n\nMvh Kim Vase", text.strip())
 
     if "Mvh Kim Vase" not in text:
         text = text.rstrip() + "\n\nMvh Kim Vase"
 
-    return text
+    if "\n\n" not in text:
+        text = text.replace(f"Hej {first_name},", f"Hej {first_name},\n\n", 1)
+
+    return text.strip()
 
 
-def send_via_resend(to_email, original_subject, draft_reply, sender):
+def send_via_resend(to_email, original_subject, draft_reply):
     if not RESEND_API_KEY:
         raise ValueError("RESEND_API_KEY mangler i Railway Variables")
-
     if not AI_FROM_EMAIL:
         raise ValueError("AI_FROM_EMAIL mangler i Railway Variables")
 
@@ -787,8 +885,6 @@ def send_via_resend(to_email, original_subject, draft_reply, sender):
         subject = original_subject
     else:
         subject = f"Re: {original_subject}"
-
-    draft_reply = normalize_draft_reply(draft_reply, sender)
 
     signature_html = """
     <br><br>
@@ -820,8 +916,7 @@ def send_via_resend(to_email, original_subject, draft_reply, sender):
         "html": html
     }
 
-    result = resend.Emails.send(params)
-    return result
+    return resend.Emails.send(params)
 
 
 def extract_reply_email(sender):
@@ -835,9 +930,6 @@ def check_mail():
 
     email_user = os.getenv("MAIL_USER")
     email_pass = os.getenv("MAIL_PASS")
-
-    print("MAIL_USER fundet:", bool(email_user))
-    print("MAIL_PASS fundet:", bool(email_pass))
 
     if not email_user or not email_pass:
         raise ValueError("MAIL_USER eller MAIL_PASS mangler i Railway Variables")
@@ -855,7 +947,6 @@ def check_mail():
         return
 
     mail_ids = messages[0].split()
-
     if not mail_ids:
         print("Ingen mails fundet")
         mail.logout()
@@ -874,13 +965,12 @@ def check_mail():
 
     for mail_id in mail_ids:
         mail_id_int = int(mail_id)
-
         if mail_id_int <= last_seen:
             continue
 
         status, msg_data = mail.fetch(mail_id, "(RFC822)")
         if status != "OK":
-            print(f"Kunne ikke hente mail {mail_id_int}")
+            print(f"Kunde ikke hente mail {mail_id_int}")
             continue
 
         for response_part in msg_data:
@@ -890,37 +980,31 @@ def check_mail():
             msg = email.message_from_bytes(response_part[1])
 
             sender = decode_mime_text(msg.get("From"))
+            recipient = extract_recipient(msg)
             subject = decode_mime_text(msg.get("Subject"))
             full_body = get_plain_text_body(msg)
             cleaned_body = strip_quoted_text(full_body)
 
-            print("========================================")
-            print(f"NY MAIL (ID {mail_id_int})")
-            print(f"Fra: {sender}")
-            print(f"Emne: {subject}")
-            print("Renset indhold preview:")
-            print(cleaned_body[:600] if cleaned_body else "(intet indhold)")
-            print("----------------------------------------")
-            print("AI analyserer mailen...")
-
             try:
-                ai_result = ai_analyze_email(sender, subject, cleaned_body)
+                ai_result, product_key = ai_analyze_email(sender, recipient, subject, cleaned_body)
                 parsed = parse_ai_result(ai_result)
-
-                print("AI RESULTAT:")
-                print("=================================")
-                print(ai_result)
-                print("=================================")
 
                 category = parsed["category"]
                 requires_reply = parsed["requires_reply"]
                 summary = parsed["summary"]
-                draft_reply = parsed["draft_reply"]
+                draft_reply = normalize_draft_reply(
+                    parsed["draft_reply"],
+                    sender,
+                    subject,
+                    product_key
+                )
 
                 if category in REPLY_CATEGORIES and requires_reply == "ja" and draft_reply.lower() != "intet":
                     save_pending_reply(
                         mail_id=mail_id_int,
                         sender=sender,
+                        recipient=recipient,
+                        product_context=product_key,
                         subject=subject,
                         category=category,
                         summary=summary,
@@ -935,8 +1019,6 @@ def check_mail():
             except Exception as ai_error:
                 print(f"AI-fejl: {ai_error}")
 
-            print("========================================")
-
     save_last_mail_id(newest_id)
     mail.logout()
 
@@ -947,7 +1029,6 @@ def polling_loop():
             check_mail()
         except Exception as e:
             print(f"Fejl: {e}")
-
         print(f"Venter {CHECK_INTERVAL_SECONDS} sekunder...")
         time.sleep(CHECK_INTERVAL_SECONDS)
 
@@ -957,7 +1038,6 @@ def dashboard():
     active_items = load_replies_by_status(["pending_approval", "approved_api", "send_failed"])
     history_items = load_replies_by_status(["sent", "rejected", "archived"])
     counts = get_counts()
-
     return render_template_string(
         HTML_TEMPLATE,
         active_items=active_items,
@@ -968,6 +1048,13 @@ def dashboard():
         rejected_count=counts["rejected"],
         archived_count=counts["archived"]
     )
+
+
+@app.route("/update_draft/<mail_id>", methods=["POST"])
+def update_draft(mail_id):
+    new_text = (request.form.get("draft_reply") or "").strip()
+    update_reply_text(mail_id, new_text)
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/approve/<mail_id>", methods=["POST"])
@@ -991,7 +1078,6 @@ def archive_reply(mail_id):
 @app.route("/send/<mail_id>", methods=["POST"])
 def send_reply(mail_id):
     item = get_reply_by_id(mail_id)
-
     if not item:
         return redirect(url_for("dashboard"))
 
@@ -1006,8 +1092,7 @@ def send_reply(mail_id):
         result = send_via_resend(
             to_email=to_email,
             original_subject=item["subject"],
-            draft_reply=item["draft_reply"],
-            sender=item["sender"]
+            draft_reply=item["draft_reply"]
         )
 
         update_reply_status(
@@ -1016,7 +1101,6 @@ def send_reply(mail_id):
             send_error=None,
             sent_at=datetime.utcnow().isoformat() + "Z"
         )
-
         print("RESEND RESULT:", result)
 
     except Exception as e:
@@ -1032,6 +1116,7 @@ def send_reply(mail_id):
 
 if __name__ == "__main__":
     init_db()
+    ensure_replies_columns()
     print("KALDER CHECK_MAIL / STARTER WEB")
     worker = threading.Thread(target=polling_loop, daemon=True)
     worker.start()
