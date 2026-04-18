@@ -1,0 +1,27 @@
+Produkt: VinterGuide
+
+VinterGuide er et system til virksomheder der arbejder med:
+- snerydning
+- saltning
+- vintertjeneste
+
+Systemet bruges til:
+- planlægning af ruter
+- styring af chauffører
+- dokumentation af udført arbejde
+- overblik i realtid
+
+Typiske kunder:
+- entreprenører
+- maskinstationer
+- kommuner
+
+Problemer det løser:
+- manglende overblik
+- dårlig dokumentation
+- tidsforbrug på koordinering
+
+Når der svares:
+- svar konkret på spørgsmålet
+- forklar kun det der er relevant
+- undgå lange forklaringer
