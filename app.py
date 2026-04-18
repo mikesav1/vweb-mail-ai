@@ -4,6 +4,7 @@ import os
 import time
 import sqlite3
 import threading
+import re
 from datetime import datetime
 from email.header import decode_header
 
@@ -155,7 +156,7 @@ HTML_TEMPLATE = """
         <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
         <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
 
-        <div class="row"><span class="label">Original preview:</span></div>
+        <div class="row"><span class="label">Renset mailtekst:</span></div>
         <pre>{{ item.original_preview }}</pre>
 
         <div class="row"><span class="label">Svarudkast:</span></div>
@@ -229,7 +230,7 @@ HTML_TEMPLATE = """
         <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
         <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
 
-        <div class="row"><span class="label">Original preview:</span></div>
+        <div class="row"><span class="label">Renset mailtekst:</span></div>
         <pre>{{ item.original_preview }}</pre>
 
         <div class="row"><span class="label">Svarudkast:</span></div>
@@ -339,8 +340,8 @@ def clean_text(text):
     if not text:
         return "(intet indhold)"
 
-    lines = [line.strip() for line in text.splitlines()]
-    lines = [line for line in lines if line]
+    lines = [line.rstrip() for line in text.splitlines()]
+    lines = [line for line in lines if line.strip()]
 
     cleaned = "\n".join(lines).strip()
     return cleaned if cleaned else "(intet indhold)"
@@ -408,6 +409,97 @@ def get_plain_text_body(msg):
     return "(intet indhold)"
 
 
+def strip_quoted_text(text):
+    if not text:
+        return "(intet indhold)"
+
+    lines = text.splitlines()
+    cleaned_lines = []
+
+    break_patterns = [
+        r"^Den .+ skrev",
+        r"^On .+ wrote:$",
+        r"^Fra:$",
+        r"^Fra:",
+        r"^From:$",
+        r"^From:",
+        r"^Sendt:$",
+        r"^Sendt:",
+        r"^Sent:$",
+        r"^Sent:",
+        r"^Til:$",
+        r"^Til:",
+        r"^To:$",
+        r"^To:",
+        r"^Emne:$",
+        r"^Emne:",
+        r"^Subject:$",
+        r"^Subject:",
+        r"^Start på videresendt besked:",
+        r"^Forwarded message",
+        r"^[-_]{5,}$",
+    ]
+
+    signature_patterns = [
+        r"^Mvh\b",
+        r"^Med venlig hilsen\b",
+        r"^Venlig hilsen\b",
+        r"^Best regards\b",
+        r"^Kind regards\b",
+        r"^Mailbot <",
+        r"^Ulla Vase\b",
+        r"^Syrenvej 5\b",
+        r"^7200 Grindsted\b",
+        r"^Tlf\.:",
+        r"^E-mail:",
+        r"^https?://",
+        r"^<https?://",
+    ]
+
+    for raw_line in lines:
+        line = raw_line.strip()
+
+        if not line:
+            if cleaned_lines:
+                cleaned_lines.append("")
+            continue
+
+        if line.startswith(">"):
+            break
+
+        matched_break = any(re.match(pattern, line, flags=re.IGNORECASE) for pattern in break_patterns)
+        if matched_break:
+            break
+
+        matched_signature = any(re.match(pattern, line, flags=re.IGNORECASE) for pattern in signature_patterns)
+        if matched_signature:
+            break
+
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    return cleaned if cleaned else "(intet indhold)"
+
+
+def extract_first_name(sender):
+    name, addr = email.utils.parseaddr(sender or "")
+    source = name.strip() or addr.split("@")[0].strip()
+
+    if not source:
+        return "der"
+
+    source = re.sub(r"[\"<>]", "", source).strip()
+    parts = source.split()
+
+    if not parts:
+        return "der"
+
+    first = parts[0].strip(" ,.-")
+    return first if first else "der"
+
+
 def get_last_mail_id():
     value = get_state("last_mail_id")
     if value is None:
@@ -470,7 +562,7 @@ def save_pending_reply(mail_id, sender, subject, category, summary, reply_needed
             reply_needed,
             summary,
             draft_reply,
-            original_preview[:1500],
+            original_preview[:2000],
             "pending_approval",
             None,
             None
@@ -558,10 +650,20 @@ def parse_ai_result(ai_text):
 
 def ai_analyze_email(sender, subject, body):
     client = get_openai_client()
+    sender_first_name = extract_first_name(sender)
     body_preview = body[:5000] if body else "(intet indhold)"
 
     prompt = f"""
-Du er en skarp mailassistent for en mindre dansk virksomhed.
+Du er en skarp mailassistent for virksomheden Vweb.
+
+Baggrund:
+- Vweb arbejder blandt andet med løsningen VinterGuide.
+- VinterGuide bruges til planlægning, overblik, dokumentation og daglig styring i praksis.
+- Svar skal være konkrete, hjælpsomme og menneskelige.
+- Du svarer som Kim Vase.
+- Modtageren skal tiltales korrekt ud fra afsenderens navn.
+- Hvis afsenderen hedder Kim, skal svaret begynde med "Hej Kim,"
+- Du må ikke forveksle afsender med virksomhedens egne navne fra gamle mails eller signaturer.
 
 Vigtige regler:
 - Du må gerne klassificere hårdt og ærligt.
@@ -576,11 +678,14 @@ Vigtige regler:
 - Svarudkast må ALDRIG indeholde pladsholdere som [Dit navn], [Navn], [Firmanavn] eller lignende.
 - Svarudkast skal afsluttes med: "Mvh Kim Vase"
 - Svarudkast skal normalt have denne struktur:
-  Hej <navn>,
+
+  Hej {sender_first_name},
 
   <selve svaret>
 
   Mvh Kim Vase
+
+- Hvis spørgsmålet handler om VinterGuide, så svar kort og konkret på det der faktisk bliver spurgt om.
 - Hvis der ikke skal svares, skriv "intet".
 
 Returnér KUN i dette format:
@@ -596,7 +701,7 @@ Afsender:
 Emne:
 {subject}
 
-Mailindhold:
+Renset mailindhold:
 {body_preview}
 """.strip()
 
@@ -608,11 +713,12 @@ Mailindhold:
     return response.output_text.strip()
 
 
-def normalize_draft_reply(draft_reply):
+def normalize_draft_reply(draft_reply, sender):
     if not draft_reply:
         return ""
 
     text = draft_reply.strip()
+    first_name = extract_first_name(sender)
 
     replacements = {
         "Mvh [Dit navn]": "Mvh Kim Vase",
@@ -621,16 +727,25 @@ def normalize_draft_reply(draft_reply):
         "Med venlig hilsen [dit navn]": "Mvh Kim Vase",
         "[Dit navn]": "Kim Vase",
         "[dit navn]": "Kim Vase",
+        "Hej Ulla,": f"Hej {first_name},",
+        "Hej ulla,": f"Hej {first_name},",
+        "Hej Mailbot,": f"Hej {first_name},",
     }
 
     for old, new in replacements.items():
         text = text.replace(old, new)
 
-    if text.startswith("Hej ") and "\n\n" not in text:
-        if "," in text:
-            first_comma = text.find(",")
-            if first_comma != -1:
-                text = text[:first_comma + 1] + "\n\n" + text[first_comma + 1:].strip()
+    text = re.sub(r"^Hej\s+[^,\n]+,", f"Hej {first_name},", text, count=1, flags=re.IGNORECASE)
+
+    if text.startswith(f"Hej {first_name},") and "\n\n" not in text:
+        text = text.replace(f"Hej {first_name},", f"Hej {first_name},\n\n", 1)
+
+    # fjern tomme eller alt for korte svar
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    content_lines = [line for line in lines if line.lower() != f"hej {first_name.lower()}," and line.lower() != "mvh kim vase"]
+
+    if len(" ".join(content_lines).strip()) < 20:
+        text = f"Hej {first_name},\n\nTak for din mail. Jeg vender tilbage med et mere præcist svar om det med det samme.\n\nMvh Kim Vase"
 
     if "Mvh Kim Vase" not in text:
         text = text.rstrip() + "\n\nMvh Kim Vase"
@@ -638,7 +753,7 @@ def normalize_draft_reply(draft_reply):
     return text
 
 
-def send_via_resend(to_email, original_subject, draft_reply):
+def send_via_resend(to_email, original_subject, draft_reply, sender):
     if not RESEND_API_KEY:
         raise ValueError("RESEND_API_KEY mangler i Railway Variables")
 
@@ -652,7 +767,7 @@ def send_via_resend(to_email, original_subject, draft_reply):
     else:
         subject = f"Re: {original_subject}"
 
-    draft_reply = normalize_draft_reply(draft_reply)
+    draft_reply = normalize_draft_reply(draft_reply, sender)
 
     signature_html = """
     <br><br>
@@ -755,19 +870,20 @@ def check_mail():
 
             sender = decode_mime_text(msg.get("From"))
             subject = decode_mime_text(msg.get("Subject"))
-            body = get_plain_text_body(msg)
+            full_body = get_plain_text_body(msg)
+            cleaned_body = strip_quoted_text(full_body)
 
             print("========================================")
             print(f"NY MAIL (ID {mail_id_int})")
             print(f"Fra: {sender}")
             print(f"Emne: {subject}")
-            print("Indhold preview:")
-            print(body[:600] if body else "(intet indhold)")
+            print("Renset indhold preview:")
+            print(cleaned_body[:600] if cleaned_body else "(intet indhold)")
             print("----------------------------------------")
             print("AI analyserer mailen...")
 
             try:
-                ai_result = ai_analyze_email(sender, subject, body)
+                ai_result = ai_analyze_email(sender, subject, cleaned_body)
                 parsed = parse_ai_result(ai_result)
 
                 print("AI RESULTAT:")
@@ -789,7 +905,7 @@ def check_mail():
                         summary=summary,
                         reply_needed=requires_reply,
                         draft_reply=draft_reply,
-                        original_preview=body
+                        original_preview=cleaned_body
                     )
                     print("SVARUDKAST GEMT TIL GODKENDELSE")
                 else:
@@ -869,7 +985,8 @@ def send_reply(mail_id):
         result = send_via_resend(
             to_email=to_email,
             original_subject=item["subject"],
-            draft_reply=item["draft_reply"]
+            draft_reply=item["draft_reply"],
+            sender=item["sender"]
         )
 
         update_reply_status(
