@@ -19,24 +19,22 @@ Problemer det løser:
 - dårlig dokumentation ved tvivl
 
 ----------------------------------------
-PRISER (SKAL BRUGES VED PRISSPØRGSMÅL)
+PRISER (DISSE TAL ER KORREKTE – MÅ IKKE ÆNDRES):
 ----------------------------------------
-
 Starter:
-- 129 kr pr. bruger / måned
+- 129 kr pr. bruger pr. måned
 - Minimum 5 brugere
 - 7.740 kr pr. år
 
 Pro:
-- 179 kr pr. bruger / måned
+- 179 kr pr. bruger pr. måned
 - Minimum 10 brugere
 - 21.480 kr pr. år
 
 Business:
-- 229 kr pr. bruger / måned
+- 229 kr pr. bruger pr. måned
 - Minimum 20 brugere
 - 54.960 kr pr. år
-
 ----------------------------------------
 PRØVEPERIODE
 ----------------------------------------
