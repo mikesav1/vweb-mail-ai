@@ -494,9 +494,11 @@ def send_via_resend(to_email, original_subject, draft_reply):
           </a>
         </td>
         <td style="vertical-align:top;">
-          <b>Ulla</b><br>
-          Vweb<br>
-          ✉ ulla@vweb.info
+          <b>Ulla Vase</b><br>
+          Syrenvej 5 <br>
+          7200 Grindsted<br>
+          Tlf.: 91 83 07 25<br>
+          Email: ulla@vweb.info
         </td>
       </tr>
     </table>
