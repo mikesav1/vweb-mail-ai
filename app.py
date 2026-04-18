@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from email.header import decode_header
 
+import resend
 from openai import OpenAI
 from bs4 import BeautifulSoup
 from flask import Flask, redirect, render_template_string, url_for
@@ -22,6 +23,9 @@ PENDING_REPLIES_FILE = "pending_replies.json"
 PORT = int(os.getenv("PORT", "8080"))
 
 REPLY_CATEGORIES = {"kunde", "vigtig", "ukendt"}
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+AI_FROM_EMAIL = os.getenv("AI_FROM_EMAIL")
 
 file_lock = threading.Lock()
 app = Flask(__name__)
@@ -57,10 +61,14 @@ HTML_TEMPLATE = """
       margin-left: 6px;
     }
     .status-pending_approval { background: #fff7ed; color: #9a3412; }
-    .status-approved_manual { background: #eff6ff; color: #1d4ed8; }
+    .status-approved_api { background: #eff6ff; color: #1d4ed8; }
+    .status-sent { background: #ecfdf5; color: #047857; }
     .status-rejected { background: #fef2f2; color: #b91c1c; }
     .status-archived { background: #f1f5f9; color: #475569; }
+    .status-send_failed { background: #fef2f2; color: #b91c1c; }
+
     .actions form { display: inline-block; margin-right: 8px; margin-top: 10px; }
+
     button {
       border: 0;
       border-radius: 8px;
@@ -68,10 +76,14 @@ HTML_TEMPLATE = """
       cursor: pointer;
       font-weight: bold;
     }
+
     .approve { background: #2563eb; color: white; }
     .reject { background: #dc2626; color: white; }
     .archive { background: #475569; color: white; }
+    .send { background: #059669; color: white; }
+    .retry { background: #ea580c; color: white; }
     .disabled { background: #94a3b8; color: white; cursor: not-allowed; }
+
     pre {
       background: #f8fafc;
       padding: 12px;
@@ -81,18 +93,21 @@ HTML_TEMPLATE = """
       overflow-x: auto;
       margin-top: 6px;
     }
+
     .topbar {
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
       margin-bottom: 16px;
     }
+
     .summary {
       background: white;
       border-radius: 10px;
       padding: 12px 16px;
       border: 1px solid #ddd;
     }
+
     .copybox {
       background: #f8fafc;
       border: 1px dashed #94a3b8;
@@ -106,11 +121,12 @@ HTML_TEMPLATE = """
 </head>
 <body>
   <h1>Mailbot godkendelse</h1>
-  <div class="muted">Denne version sender ikke noget automatisk. Godkendte svar er kun klar til manuel afsendelse.</div>
+  <div class="muted">Denne version sender ikke noget uden manuel handling. Godkend først, send bagefter.</div>
 
   <div class="topbar">
     <div class="summary">Afventer: <strong>{{ pending_count }}</strong></div>
-    <div class="summary">Godkendt til manuel send: <strong>{{ approved_count }}</strong></div>
+    <div class="summary">Godkendt til API-send: <strong>{{ approved_count }}</strong></div>
+    <div class="summary">Sendt: <strong>{{ sent_count }}</strong></div>
     <div class="summary">Afvist: <strong>{{ rejected_count }}</strong></div>
     <div class="summary">Arkiveret: <strong>{{ archived_count }}</strong></div>
   </div>
@@ -135,16 +151,24 @@ HTML_TEMPLATE = """
         <div class="row"><span class="label">Svarudkast:</span></div>
         <pre>{{ item.draft_reply }}</pre>
 
-        {% if item.status == "approved_manual" %}
+        {% if item.sent_at %}
+          <div class="row"><span class="label">Sendt:</span> {{ item.sent_at }}</div>
+        {% endif %}
+
+        {% if item.send_error %}
+          <div class="row"><span class="label">Sendefejl:</span> {{ item.send_error }}</div>
+        {% endif %}
+
+        {% if item.status == "approved_api" %}
           <div class="copybox">
-            Dette svar er godkendt og klar til manuel afsendelse. Kopiér teksten ovenfor og indsæt den i din mail.
+            Dette svar er godkendt og klar til API-afsendelse.
           </div>
         {% endif %}
 
         <div class="actions">
           {% if item.status == "pending_approval" %}
             <form method="post" action="{{ url_for('approve_reply', mail_id=item.mail_id) }}">
-              <button class="approve" type="submit">Godkend til manuel send</button>
+              <button class="approve" type="submit">Godkend til send</button>
             </form>
             <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
               <button class="reject" type="submit">Afvis</button>
@@ -152,13 +176,25 @@ HTML_TEMPLATE = """
             <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
               <button class="archive" type="submit">Arkivér</button>
             </form>
-          {% elif item.status == "approved_manual" %}
+          {% elif item.status == "approved_api" %}
+            <form method="post" action="{{ url_for('send_reply', mail_id=item.mail_id) }}">
+              <button class="send" type="submit">Send nu</button>
+            </form>
             <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
               <button class="reject" type="submit">Afvis</button>
             </form>
             <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
               <button class="archive" type="submit">Arkivér</button>
             </form>
+          {% elif item.status == "send_failed" %}
+            <form method="post" action="{{ url_for('send_reply', mail_id=item.mail_id) }}">
+              <button class="retry" type="submit">Prøv at sende igen</button>
+            </form>
+            <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
+              <button class="reject" type="submit">Afvis</button>
+            </form>
+          {% elif item.status == "sent" %}
+            <button class="disabled" disabled>Mail sendt</button>
           {% elif item.status == "rejected" %}
             <button class="disabled" disabled>Afvist</button>
           {% elif item.status == "archived" %}
@@ -320,20 +356,25 @@ def save_pending_reply(mail_id, sender, subject, category, summary, reply_needed
             "summary": summary,
             "draft_reply": draft_reply,
             "original_preview": original_preview[:1500],
-            "status": "pending_approval"
+            "status": "pending_approval",
+            "sent_at": None,
+            "send_error": None
         }
     )
 
     save_pending_replies(pending)
 
 
-def update_reply_status(mail_id, new_status):
+def update_reply_status(mail_id, new_status, send_error=None, sent_at=None):
     items = load_pending_replies()
     updated = False
 
     for item in items:
         if str(item.get("mail_id")) == str(mail_id):
             item["status"] = new_status
+            item["send_error"] = send_error
+            if sent_at:
+                item["sent_at"] = sent_at
             updated = True
             break
 
@@ -341,6 +382,14 @@ def update_reply_status(mail_id, new_status):
         save_pending_replies(items)
 
     return updated
+
+
+def get_reply_by_id(mail_id):
+    items = load_pending_replies()
+    for item in items:
+        if str(item.get("mail_id")) == str(mail_id):
+            return item
+    return None
 
 
 def get_openai_client():
@@ -418,6 +467,38 @@ Mailindhold:
     )
 
     return response.output_text.strip()
+
+
+def send_via_resend(to_email, original_subject, draft_reply):
+    if not RESEND_API_KEY:
+        raise ValueError("RESEND_API_KEY mangler i Railway Variables")
+
+    if not AI_FROM_EMAIL:
+        raise ValueError("AI_FROM_EMAIL mangler i Railway Variables")
+
+    resend.api_key = RESEND_API_KEY
+
+    if original_subject.lower().startswith("re:"):
+        subject = original_subject
+    else:
+        subject = f"Re: {original_subject}"
+
+    html = f"<p>{draft_reply.replace(chr(10), '<br>')}</p>"
+
+    params = {
+        "from": AI_FROM_EMAIL,
+        "to": [to_email],
+        "subject": subject,
+        "html": html
+    }
+
+    result = resend.Emails.send(params)
+    return result
+
+
+def extract_reply_email(sender):
+    parsed = email.utils.parseaddr(sender)
+    return parsed[1]
 
 
 def check_mail():
@@ -548,7 +629,8 @@ def dashboard():
     items = sorted(items, key=lambda x: (x.get("status") != "pending_approval", x.get("saved_at", "")))
 
     pending_count = sum(1 for i in items if i.get("status") == "pending_approval")
-    approved_count = sum(1 for i in items if i.get("status") == "approved_manual")
+    approved_count = sum(1 for i in items if i.get("status") == "approved_api")
+    sent_count = sum(1 for i in items if i.get("status") == "sent")
     rejected_count = sum(1 for i in items if i.get("status") == "rejected")
     archived_count = sum(1 for i in items if i.get("status") == "archived")
 
@@ -557,6 +639,7 @@ def dashboard():
         items=items,
         pending_count=pending_count,
         approved_count=approved_count,
+        sent_count=sent_count,
         rejected_count=rejected_count,
         archived_count=archived_count
     )
@@ -564,7 +647,7 @@ def dashboard():
 
 @app.route("/approve/<mail_id>", methods=["POST"])
 def approve_reply(mail_id):
-    update_reply_status(mail_id, "approved_manual")
+    update_reply_status(mail_id, "approved_api")
     return redirect(url_for("dashboard"))
 
 
@@ -577,6 +660,47 @@ def reject_reply(mail_id):
 @app.route("/archive/<mail_id>", methods=["POST"])
 def archive_reply(mail_id):
     update_reply_status(mail_id, "archived")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/send/<mail_id>", methods=["POST"])
+def send_reply(mail_id):
+    item = get_reply_by_id(mail_id)
+
+    if not item:
+        return redirect(url_for("dashboard"))
+
+    if item.get("status") not in {"approved_api", "send_failed"}:
+        return redirect(url_for("dashboard"))
+
+    try:
+        to_email = extract_reply_email(item["sender"])
+        if not to_email:
+            raise ValueError("Kunne ikke udlede modtagerens mailadresse")
+
+        result = send_via_resend(
+            to_email=to_email,
+            original_subject=item["subject"],
+            draft_reply=item["draft_reply"]
+        )
+
+        update_reply_status(
+            mail_id=mail_id,
+            new_status="sent",
+            send_error=None,
+            sent_at=datetime.utcnow().isoformat() + "Z"
+        )
+
+        print("RESEND RESULT:", result)
+
+    except Exception as e:
+        update_reply_status(
+            mail_id=mail_id,
+            new_status="send_failed",
+            send_error=str(e),
+            sent_at=None
+        )
+
     return redirect(url_for("dashboard"))
 
 
