@@ -1,10 +1,14 @@
 Produkt: SlushBook
 
-SlushBook er en løsning til håndtering af opskrifter og produkter inden for slushice.
+SlushBook er et system til at håndtere slushice-opskrifter og tilhørende produkter ét sted.
+
+Det bruges til at skabe overblik over ingredienser, blandingsforhold og opskrifter, så man kan arbejde ensartet og uden gætværk.
 
 Produktet er stadig under udvikling.
 
-Hvis der kommer spørgsmål:
-- svar kort
-- forklar hvad det er
-- og at det er under udvikling
+Når der svares:
+
+* svar kort og konkret
+* forklar kun det, der bliver spurgt om
+* undgå fyld og salgssnak
+* nævn kun udvikling, hvis det er relevant for spørgsmålet
