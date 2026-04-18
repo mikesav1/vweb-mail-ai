@@ -40,6 +40,7 @@ HTML_TEMPLATE = """
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; background: #f6f7f9; color: #222; }
     h1 { margin-bottom: 8px; }
+    h2 { margin-top: 28px; margin-bottom: 10px; }
     .muted { color: #666; margin-bottom: 20px; }
     .card {
       background: white;
@@ -117,6 +118,14 @@ HTML_TEMPLATE = """
       color: #334155;
       margin-top: 8px;
     }
+
+    .empty {
+      background: white;
+      border: 1px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 16px;
+      color: #64748b;
+    }
   </style>
 </head>
 <body>
@@ -131,8 +140,9 @@ HTML_TEMPLATE = """
     <div class="summary">Arkiveret: <strong>{{ archived_count }}</strong></div>
   </div>
 
-  {% if items %}
-    {% for item in items %}
+  <h2>Aktive mails</h2>
+  {% if active_items %}
+    {% for item in active_items %}
       <div class="card">
         <div class="row">
           <span class="label">Mail ID:</span> {{ item.mail_id }}
@@ -193,18 +203,49 @@ HTML_TEMPLATE = """
             <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
               <button class="reject" type="submit">Afvis</button>
             </form>
-          {% elif item.status == "sent" %}
-            <button class="disabled" disabled>Mail sendt</button>
-          {% elif item.status == "rejected" %}
-            <button class="disabled" disabled>Afvist</button>
-          {% elif item.status == "archived" %}
-            <button class="disabled" disabled>Arkiveret</button>
+            <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
+              <button class="archive" type="submit">Arkivér</button>
+            </form>
           {% endif %}
         </div>
       </div>
     {% endfor %}
   {% else %}
-    <div class="card">Ingen svarudkast endnu.</div>
+    <div class="empty">Ingen aktive mails lige nu.</div>
+  {% endif %}
+
+  <h2>Historik</h2>
+  {% if history_items %}
+    {% for item in history_items %}
+      <div class="card">
+        <div class="row">
+          <span class="label">Mail ID:</span> {{ item.mail_id }}
+          <span class="badge">{{ item.category }}</span>
+          <span class="badge status-{{ item.status }}">{{ item.status }}</span>
+        </div>
+
+        <div class="row"><span class="label">Fra:</span> {{ item.sender }}</div>
+        <div class="row"><span class="label">Emne:</span> {{ item.subject }}</div>
+        <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
+        <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
+
+        <div class="row"><span class="label">Original preview:</span></div>
+        <pre>{{ item.original_preview }}</pre>
+
+        <div class="row"><span class="label">Svarudkast:</span></div>
+        <pre>{{ item.draft_reply }}</pre>
+
+        {% if item.sent_at %}
+          <div class="row"><span class="label">Sendt:</span> {{ item.sent_at }}</div>
+        {% endif %}
+
+        {% if item.send_error %}
+          <div class="row"><span class="label">Sendefejl:</span> {{ item.send_error }}</div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">Ingen historik endnu.</div>
   {% endif %}
 </body>
 </html>
@@ -381,18 +422,18 @@ def save_last_mail_id(mail_id):
     set_state("last_mail_id", mail_id)
 
 
-def load_pending_replies():
+def load_replies_by_status(statuses):
+    placeholders = ",".join("?" for _ in statuses)
     with file_lock:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("""
+        cur.execute(f"""
             SELECT mail_id, saved_at, sender, subject, category, requires_reply,
                    summary, draft_reply, original_preview, status, sent_at, send_error
             FROM replies
-            ORDER BY
-              CASE WHEN status = 'pending_approval' THEN 0 ELSE 1 END,
-              datetime(saved_at) DESC
-        """)
+            WHERE status IN ({placeholders})
+            ORDER BY datetime(COALESCE(sent_at, saved_at)) DESC
+        """, tuple(statuses))
         rows = cur.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -736,12 +777,14 @@ def polling_loop():
 
 @app.route("/")
 def dashboard():
-    items = load_pending_replies()
+    active_items = load_replies_by_status(["pending_approval", "approved_api", "send_failed"])
+    history_items = load_replies_by_status(["sent", "rejected", "archived"])
     counts = get_counts()
 
     return render_template_string(
         HTML_TEMPLATE,
-        items=items,
+        active_items=active_items,
+        history_items=history_items,
         pending_count=counts["pending_approval"],
         approved_count=counts["approved_api"],
         sent_count=counts["sent"],
