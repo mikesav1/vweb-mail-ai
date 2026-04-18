@@ -482,25 +482,27 @@ def send_via_resend(to_email, original_subject, draft_reply):
         subject = original_subject
     else:
         subject = f"Re: {original_subject}"
-signature = """
-<br><br>
-<hr style="border:none;border-top:1px solid #ddd;">
-<table style="font-family: Arial, sans-serif; font-size:14px;">
-<tr>
-  <td style="padding-right:15px;">
-    <img src="https://vweb.info/images/vweb-logo.svg" alt="Vweb logo" width="120">
-  </td>
-  <td>
-    <b>Ulla Vase</b><br>
-    Vweb<br>
-    📞 +45 91 83 07 25<br>
-    ✉ ulla@vweb.info
-  </td>
-</tr>
-</table>
-"""
 
-html = f"<p>{draft_reply.replace(chr(10), '<br>')}</p>{signature}"
+    signature_html = """
+    <br><br>
+    <hr style="border:none;border-top:1px solid #ddd;">
+    <table style="font-family: Arial, sans-serif; font-size:14px; color:#222;">
+      <tr>
+        <td style="padding-right:15px; vertical-align:top;">
+          <a href="https://vweb.info" target="_blank">
+            <img src="https://vweb.info/images/vweb-logo.svg" alt="Vweb logo" width="120">
+          </a>
+        </td>
+        <td style="vertical-align:top;">
+          <b>Ulla</b><br>
+          Vweb<br>
+          ✉ ulla@vweb.info
+        </td>
+      </tr>
+    </table>
+    """
+
+    html = f"<p>{draft_reply.replace(chr(10), '<br>')}</p>{signature_html}"
 
     params = {
         "from": AI_FROM_EMAIL,
@@ -539,7 +541,7 @@ def check_mail():
 
     status, messages = mail.search(None, "ALL")
     if status != "OK":
-        print("Kunde ikke hente mails")
+        print("Kunne ikke hente mails")
         mail.logout()
         return
 
@@ -569,7 +571,7 @@ def check_mail():
 
         status, msg_data = mail.fetch(mail_id, "(RFC822)")
         if status != "OK":
-            print(f"Kunde ikke hente mail {mail_id_int}")
+            print(f"Kunne ikke hente mail {mail_id_int}")
             continue
 
         for response_part in msg_data:
