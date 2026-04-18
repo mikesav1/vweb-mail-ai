@@ -488,7 +488,7 @@ def send_via_resend(to_email, original_subject, draft_reply):
     <hr style="border:none;border-top:1px solid #ddd;">
     <table style="font-family: Arial, sans-serif; font-size:14px; color:#222;">
       <tr>
-        <td style="padding-right:15px; vertical-align:top;">
+        <td style="padding-right:15px; vertical-align:center;">
           <a href="https://vweb.info" target="_blank">
             <img src="https://vweb.info/images/vweb-logo.svg" alt="Vweb logo" width="120">
           </a>
