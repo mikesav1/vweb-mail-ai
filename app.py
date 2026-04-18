@@ -268,13 +268,6 @@ def init_db():
         cur = conn.cursor()
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS app_state (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS replies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 mail_id TEXT UNIQUE,
@@ -333,27 +326,6 @@ def get_product_context(recipient, subject, body):
         return "slushbook", read_text_file(PRODUCT_SLUSHBOOK_FILE)
 
     return "vweb", ""
-
-def get_state(key):
-    with file_lock:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM app_state WHERE key = ?", (key,))
-        row = cur.fetchone()
-        conn.close()
-        return row["value"] if row else None
-
-def set_state(key, value):
-    with file_lock:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO app_state (key, value)
-            VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        """, (key, str(value)))
-        conn.commit()
-        conn.close()
 
 def decode_mime_text(value):
     if not value:
@@ -536,7 +508,6 @@ def next_weekday_date(target_weekday: int) -> str:
 
 def build_date_hint(body: str) -> str:
     lower = (body or "").lower()
-
     mapping = {
         "mandag i næste uge": 0,
         "tirsdag i næste uge": 1,
@@ -551,18 +522,6 @@ def build_date_hint(body: str) -> str:
             day_name = phrase.split(" i næste uge")[0].capitalize()
             return f"{day_name} i næste uge er den {next_weekday_date(weekday)}."
     return ""
-
-def get_last_mail_id():
-    value = get_state("last_mail_id")
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except Exception:
-        return None
-
-def save_last_mail_id(mail_id):
-    set_state("last_mail_id", mail_id)
 
 def load_replies_by_status(statuses):
     placeholders = ",".join("?" for _ in statuses)
@@ -695,9 +654,6 @@ def parse_ai_result(ai_text):
 def normalize_draft_reply(draft_reply, sender, product_key=""):
     text = (draft_reply or "").strip()
     first_name = extract_first_name(sender)
-
-    if not text:
-        text = ""
 
     replacements = {
         "Mvh [Dit navn]": "Mvh Ulla Vase",
@@ -837,7 +793,6 @@ def send_via_resend(to_email, original_subject, draft_reply, sender):
         raise ValueError("AI_FROM_EMAIL mangler i Railway Variables")
 
     resend.api_key = RESEND_API_KEY
-
     subject = original_subject if original_subject.lower().startswith("re:") else f"Re: {original_subject}"
 
     signature_html = """
@@ -893,8 +848,6 @@ def check_mail():
     if not email_user or not email_pass:
         raise ValueError("MAIL_USER eller MAIL_PASS mangler i Railway Variables")
 
-    last_seen = get_last_mail_id()
-
     mail = imaplib.IMAP4_SSL(IMAP_SERVER)
     mail.login(email_user, email_pass)
     mail.select(MAILBOX)
@@ -911,20 +864,13 @@ def check_mail():
         mail.logout()
         return
 
-    newest_id = int(mail_ids[-1])
-    print(f"Nyeste mail ID: {newest_id}")
+    recent_mail_ids = mail_ids[-100:]
+    print(f"Scanner {len(recent_mail_ids)} mails...")
 
-    if last_seen is None:
-        print("Ingen tidligere state fundet. Springer gamle mails over første gang.")
-        save_last_mail_id(newest_id)
-        mail.logout()
-        return
-
-    print(f"Sidst behandlet ID: {last_seen}")
-
-    for mail_id in mail_ids:
+    for mail_id in recent_mail_ids:
         mail_id_int = int(mail_id)
-        if mail_id_int <= last_seen:
+
+        if already_saved_reply(mail_id_int):
             continue
 
         status, msg_data = mail.fetch(mail_id, "(RFC822)")
@@ -939,10 +885,16 @@ def check_mail():
             msg = email.message_from_bytes(response_part[1])
 
             sender = decode_mime_text(msg.get("From"))
-            recipient = extract_recipient(msg) or os.getenv("MAIL_USER", "")
+            recipient = extract_recipient(msg) or email_user
             subject = decode_mime_text(msg.get("Subject"))
             full_body = get_plain_text_body(msg)
             cleaned_body = strip_quoted_text(full_body)
+
+            print("========================================")
+            print(f"NY MAIL (ID {mail_id_int})")
+            print(f"Fra: {sender}")
+            print(f"Emne: {subject}")
+            print("----------------------------------------")
 
             try:
                 ai_result, product_key = ai_analyze_email(
@@ -960,7 +912,6 @@ def check_mail():
                 category = parsed["category"]
                 requires_reply = parsed["requires_reply"]
                 summary = parsed["summary"]
-
                 raw_reply = parsed.get("draft_reply", "").strip()
 
                 if not raw_reply or raw_reply.lower() == "intet":
@@ -969,13 +920,9 @@ def check_mail():
                     else:
                         raw_reply = f"Hej {extract_first_name(sender)},\n\nTak for din mail. Jeg vender tilbage med et konkret svar.\n\nMvh Ulla Vase"
 
-                draft_reply = normalize_draft_reply(
-                    raw_reply,
-                    sender,
-                    product_key
-                )
+                draft_reply = normalize_draft_reply(raw_reply, sender, product_key)
 
-                if category in REPLY_CATEGORIES and requires_reply == "ja" and draft_reply.lower() != "intet":
+                if category in REPLY_CATEGORIES and requires_reply == "ja":
                     save_pending_reply(
                         mail_id=mail_id_int,
                         sender=sender,
@@ -988,14 +935,13 @@ def check_mail():
                         draft_reply=draft_reply,
                         original_preview=cleaned_body
                     )
-                    print("SVARUDKAST GEMT TIL GODKENDELSE")
+                    print("SVARUDKAST GEMT")
                 else:
-                    print("INGEN SVAR GEMT")
+                    print("INGEN SVAR NØDVENDIGT")
 
-            except Exception as ai_error:
-                print(f"AI-fejl: {ai_error}")
+            except Exception as e:
+                print(f"FEJL: {e}")
 
-    save_last_mail_id(newest_id)
     mail.logout()
 
 def polling_loop():
