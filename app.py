@@ -121,11 +121,11 @@ HTML_TEMPLATE = """
 </head>
 <body>
   <h1>Mailbot godkendelse</h1>
-  <div class="muted">Denne version sender ikke noget uden manuel handling. Godkend først, send bagefter.</div>
+  <div class="muted">Godkend først. Send bagefter. Ingen mail sendes automatisk.</div>
 
   <div class="topbar">
     <div class="summary">Afventer: <strong>{{ pending_count }}</strong></div>
-    <div class="summary">Godkendt til API-send: <strong>{{ approved_count }}</strong></div>
+    <div class="summary">Godkendt til send: <strong>{{ approved_count }}</strong></div>
     <div class="summary">Sendt: <strong>{{ sent_count }}</strong></div>
     <div class="summary">Afvist: <strong>{{ rejected_count }}</strong></div>
     <div class="summary">Arkiveret: <strong>{{ archived_count }}</strong></div>
@@ -161,7 +161,7 @@ HTML_TEMPLATE = """
 
         {% if item.status == "approved_api" %}
           <div class="copybox">
-            Dette svar er godkendt og klar til API-afsendelse.
+            Dette svar er godkendt og klar til afsendelse.
           </div>
         {% endif %}
 
@@ -522,7 +522,7 @@ def check_mail():
 
     status, messages = mail.search(None, "ALL")
     if status != "OK":
-        print("Kunne ikke hente mails")
+        print("Kunde ikke hente mails")
         mail.logout()
         return
 
@@ -552,7 +552,7 @@ def check_mail():
 
         status, msg_data = mail.fetch(mail_id, "(RFC822)")
         if status != "OK":
-            print(f"Kunne ikke hente mail {mail_id_int}")
+            print(f"Kunde ikke hente mail {mail_id_int}")
             continue
 
         for response_part in msg_data:
