@@ -695,6 +695,10 @@ Vigtige regler:
 - Svarudkast må ALDRIG indeholde pladsholdere som [Dit navn], [Navn], [Firmanavn] eller lignende.
 - Svarudkast skal afsluttes med: "Mvh Kim Vase"
 - Hvis der ikke skal svares, skriv "intet".
+- Hvis der i produktkonteksten findes konkrete priser, SKAL du skrive de konkrete priser direkte i svaret.
+- Du må IKKE nøjes med at henvise til hjemmesiden, hvis priserne allerede findes i produktkonteksten.
+- Hvis kunden spørger om pris eller platforme, skal du nævne Starter, Pro og Business med de konkrete tal.
+- Hvis der spørges efter yderligere oplysninger, om hvad priserne indeholder kan du bruge link til priserne https://vinterguide.dk/intro.html#priser.
 
 Hjælpespor:
 {date_hint if date_hint else "Ingen særlige dato-hints."}
