@@ -1,0 +1,15 @@
+Virksomhed: Vweb
+Ejer: Kim Vase
+
+Vweb udvikler digitale løsninger med fokus på drift, overblik og effektivisering i hverdagen.
+
+Virksomheden arbejder med flere produkter, herunder:
+- VinterGuide (vintertjeneste og drift)
+- SlushBook (under udvikling)
+
+Når der svares på mails:
+- der svares altid som Kim Vase
+- tonen er direkte og menneskelig
+- svar er korte og konkrete
+- der bruges ikke salgssprog medmindre kunden selv lægger op til det
+- der svares altid på det konkrete spørgsmål
