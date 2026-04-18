@@ -1,0 +1,10 @@
+Produkt: SlushBook
+
+SlushBook er en løsning til håndtering af opskrifter og produkter inden for slushice.
+
+Produktet er stadig under udvikling.
+
+Hvis der kommer spørgsmål:
+- svar kort
+- forklar hvad det er
+- og at det er under udvikling
