@@ -1,38 +1,61 @@
 Produkt: VinterGuide
 
-VinterGuide er et digitalt system til virksomheder, der arbejder med snerydning, saltning og vintertjeneste.
-Det samler planlægning, drift og dokumentation i ét system, så du altid har overblik – også når vejret presser.
+Kort:
+VinterGuide er et system til at styre, dokumentere og skabe overblik i vinterberedskab – samlet ét sted.
 
-⸻
+Beskrivelse:
+VinterGuide bruges af entreprenører, maskinstationer og kommuner til at håndtere snerydning og vintertjeneste.
+Systemet samler planlægning, chauffører, opgaver og dokumentation, så man altid ved hvad der er lavet, hvornår og af hvem.
 
-Systemet bruges til:
-
-* planlægning og optimering af ruter
-* styring af chauffører og opgaver
-* dokumentation af udført arbejde
-* overblik i realtid over drift og aktivitet
-
-⸻
-
-Typiske kunder:
-
-* entreprenører
-* maskinstationer
-* kommuner
-
-⸻
+Det bruges til:
+- planlægning og optimering af ruter
+- styring af chauffører og opgaver
+- dokumentation af udført arbejde
+- overblik i realtid
 
 Problemer det løser:
+- manglende overblik
+- manuel koordinering (sms, Excel osv.)
+- dårlig dokumentation ved tvivl
 
-* manglende overblik over opgaver og drift
-* usikker eller mangelfuld dokumentation
-* for meget tid brugt på koordinering og opfølgning
+----------------------------------------
+PRISER (SKAL BRUGES VED PRISSPØRGSMÅL)
+----------------------------------------
 
-⸻
+Starter:
+- 129 kr pr. bruger / måned
+- Minimum 5 brugere
+- 7.740 kr pr. år
+
+Pro:
+- 179 kr pr. bruger / måned
+- Minimum 10 brugere
+- 21.480 kr pr. år
+
+Business:
+- 229 kr pr. bruger / måned
+- Minimum 20 brugere
+- 54.960 kr pr. år
+
+----------------------------------------
+PRØVEPERIODE
+----------------------------------------
+
+- 14 dages gratis prøve
+- Fuld adgang (Pro-niveau)
+- Ingen betaling i perioden
+
+----------------------------------------
+REGLER FOR SVAR
+----------------------------------------
+
+Når der spørges om pris:
+- Du SKAL bruge de konkrete priser ovenfor
+- Du må IKKE svare generelt
+- Du skal nævne relevante pakker
 
 Når der svares:
-
-* svar direkte på spørgsmålet
-* hold det kort og konkret
-* forklar kun det der er relevant
-* undgå salgssnak og lange forklaringer
+- svar direkte på spørgsmålet
+- hold det kort og konkret
+- ingen fluffy salgssnak
+- ingen lange forklaringer
