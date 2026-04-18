@@ -482,8 +482,25 @@ def send_via_resend(to_email, original_subject, draft_reply):
         subject = original_subject
     else:
         subject = f"Re: {original_subject}"
+signature = """
+<br><br>
+<hr style="border:none;border-top:1px solid #ddd;">
+<table style="font-family: Arial, sans-serif; font-size:14px;">
+<tr>
+  <td style="padding-right:15px;">
+    <img src="https://vweb.info/images/vweb-logo.svg" alt="Vweb logo" width="120">
+  </td>
+  <td>
+    <b>Ulla Vase</b><br>
+    Vweb<br>
+    📞 +45 91 83 07 25<br>
+    ✉ ulla@vweb.info
+  </td>
+</tr>
+</table>
+"""
 
-    html = f"<p>{draft_reply.replace(chr(10), '<br>')}</p>"
+html = f"<p>{draft_reply.replace(chr(10), '<br>')}</p>{signature}"
 
     params = {
         "from": AI_FROM_EMAIL,
