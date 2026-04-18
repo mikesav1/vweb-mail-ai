@@ -698,8 +698,15 @@ Vigtige regler:
 - Hvis der i produktkonteksten findes konkrete priser, SKAL du skrive de konkrete priser direkte i svaret.
 - Du må IKKE nøjes med at henvise til hjemmesiden, hvis priserne allerede findes i produktkonteksten.
 - Hvis kunden spørger om pris eller platforme, skal du nævne Starter, Pro og Business med de konkrete tal.
-- Hvis der spørges efter yderligere oplysninger, om hvad priserne indeholder kan du bruge link til priserne https://vinterguide.dk/intro.html#priser.
-
+- Du må ALDRIG opfinde eller gætte priser.
+- Du må KUN bruge priser fra produktkonteksten.
+- Hvis priser ikke findes, skriv "jeg har ikke de konkrete priser lige nu".
+- Når du skriver priser, SKAL du skrive:
+  "kr pr. bruger pr. måned"
+- Du SKAL skrive at der betales årligt.
+- Du SKAL inkludere link:
+  https://vinterguide.dk/intro.html#priser
+- Du SKAL lave linjeskift mellem afsnit.
 Hjælpespor:
 {date_hint if date_hint else "Ingen særlige dato-hints."}
 
