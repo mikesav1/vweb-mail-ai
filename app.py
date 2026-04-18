@@ -573,6 +573,14 @@ Vigtige regler:
 - Svarudkast må ikke lyde som AI.
 - Svarudkast skal være kort, naturligt og direkte.
 - Ingen punktopstilling i selve svarudkastet.
+- Svarudkast må ALDRIG indeholde pladsholdere som [Dit navn], [Navn], [Firmanavn] eller lignende.
+- Svarudkast skal afsluttes med: "Mvh Kim Vase"
+- Svarudkast skal normalt have denne struktur:
+  Hej <navn>,
+
+  <selve svaret>
+
+  Mvh Kim Vase
 - Hvis der ikke skal svares, skriv "intet".
 
 Returnér KUN i dette format:
@@ -600,6 +608,36 @@ Mailindhold:
     return response.output_text.strip()
 
 
+def normalize_draft_reply(draft_reply):
+    if not draft_reply:
+        return ""
+
+    text = draft_reply.strip()
+
+    replacements = {
+        "Mvh [Dit navn]": "Mvh Kim Vase",
+        "Mvh [dit navn]": "Mvh Kim Vase",
+        "Med venlig hilsen [Dit navn]": "Mvh Kim Vase",
+        "Med venlig hilsen [dit navn]": "Mvh Kim Vase",
+        "[Dit navn]": "Kim Vase",
+        "[dit navn]": "Kim Vase",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    if text.startswith("Hej ") and "\n\n" not in text:
+        if "," in text:
+            first_comma = text.find(",")
+            if first_comma != -1:
+                text = text[:first_comma + 1] + "\n\n" + text[first_comma + 1:].strip()
+
+    if "Mvh Kim Vase" not in text:
+        text = text.rstrip() + "\n\nMvh Kim Vase"
+
+    return text
+
+
 def send_via_resend(to_email, original_subject, draft_reply):
     if not RESEND_API_KEY:
         raise ValueError("RESEND_API_KEY mangler i Railway Variables")
@@ -613,6 +651,8 @@ def send_via_resend(to_email, original_subject, draft_reply):
         subject = original_subject
     else:
         subject = f"Re: {original_subject}"
+
+    draft_reply = normalize_draft_reply(draft_reply)
 
     signature_html = """
     <br><br>
