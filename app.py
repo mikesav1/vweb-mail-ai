@@ -992,12 +992,17 @@ def check_mail():
                 category = parsed["category"]
                 requires_reply = parsed["requires_reply"]
                 summary = parsed["summary"]
-                draft_reply = normalize_draft_reply(
-                    parsed["draft_reply"],
-                    sender,
-                    subject,
-                    product_key
-                )
+                raw_reply = parsed.get("draft_reply", "").strip()
+
+if not raw_reply or raw_reply.lower() == "intet":
+    raw_reply = f"Hej {extract_first_name(sender)},\n\nVinterGuide findes i tre løsninger:\n\nStarter:\n129 kr pr. bruger pr. måned (min. 5 brugere)\n\nPro:\n179 kr pr. bruger pr. måned (min. 10 brugere)\n\nBusiness:\n229 kr pr. bruger pr. måned (min. 20 brugere)\n\nDer betales for et år ad gangen.\n\nDu kan læse mere her:\nhttps://vinterguide.dk/intro.html#priser\n\nMvh Ulla Vase"
+
+draft_reply = normalize_draft_reply(
+    raw_reply,
+    sender,
+    subject,
+    product_key
+)
 
                 if category in REPLY_CATEGORIES and requires_reply == "ja" and draft_reply.lower() != "intet":
                     save_pending_reply(
