@@ -704,7 +704,22 @@ def send_reply(mail_id):
             sent_at=None
         )
     return redirect(url_for("dashboard"))
+def ensure_replies_columns():
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(replies)")
+        columns = [row["name"] for row in cur.fetchall()]
 
+        if "recipient" not in columns:
+            cur.execute("ALTER TABLE replies ADD COLUMN recipient TEXT")
+        if "product_context" not in columns:
+            cur.execute("ALTER TABLE replies ADD COLUMN product_context TEXT")
+        if "is_new" not in columns:
+            cur.execute("ALTER TABLE replies ADD COLUMN is_new TEXT")
+
+        conn.commit()
+        conn.close()
 if __name__ == "__main__":
     init_db()
     ensure_replies_columns()
