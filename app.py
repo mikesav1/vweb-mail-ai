@@ -753,7 +753,9 @@ Vigtige regler:
 - Du SKAL inkludere linket https://vinterguide.dk/intro.html#priser ved prisforespørgsler.
 - Du SKAL lave linjeskift mellem afsnit.
 - Du SKAL altid udfylde SVARUDKAST med et konkret svar hvis KRÆVER_SVAR er ja.
-- SVARUDKAST må ALDRIG være tomt.
+- SVARUDKAST SKAL altid indeholde et konkret svar.
+Hvis du er i tvivl, så giv et bedste realistiske svar baseret på konteksten.
+Du må ALDRIG skrive "intet".
 - Svarudkast skal afsluttes med: "Mvh Ulla Vase"
 - Hvis der ikke skal svares, skriv "intet".
 
@@ -914,8 +916,8 @@ def check_mail():
                 summary = parsed["summary"]
                 raw_reply = parsed.get("draft_reply", "").strip()
 
-                if not raw_reply or raw_reply.lower() == "intet":
-                    if product_key == "vinterguide":
+               if not raw_reply or len(raw_reply.strip()) < 20:
+    raw_reply = f"Hej {extract_first_name(sender)},\n\nTak for din mail. Jeg vender tilbage med et konkret svar.\n\nMvh Ulla Vase"
                         raw_reply = fallback_vinterguide_price_reply(sender)
                     else:
                         raw_reply = f"Hej {extract_first_name(sender)},\n\nTak for din mail. Jeg vender tilbage med et konkret svar.\n\nMvh Ulla Vase"
