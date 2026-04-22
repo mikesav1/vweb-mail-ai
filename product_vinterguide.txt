@@ -13,6 +13,22 @@ Det bruges til:
 - dokumentation af udført arbejde
 - overblik i realtid
 
+PRISER:
+Starter: 129 kr pr. bruger pr. måned. Minimum 5 brugere. 7.740 kr pr. år.
+Pro: 179 kr pr. bruger pr. måned. Minimum 10 brugere. 21.480 kr pr. år.
+Business: 229 kr pr. bruger pr. måned. Minimum 20 brugere. 54.960 kr pr. år.
+
+Der betales for et år ad gangen.
+14 dages gratis prøve.
+Link: https://vinterguide.dk/intro.html#priser
+
+
+Det bruges til:
+- planlægning og optimering af ruter
+- styring af chauffører og opgaver
+- dokumentation af udført arbejde
+- overblik i realtid
+
 Problemer det løser:
 - manglende overblik
 - manuel koordinering
