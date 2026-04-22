@@ -5,6 +5,7 @@ import time
 import sqlite3
 import threading
 import re
+from pathlib import Path
 from datetime import datetime, timedelta
 from email.header import decode_header
 
@@ -38,33 +39,36 @@ HTML_TEMPLATE = """
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="10">
-  <title>Mailbot godkendelse</title>
+  <meta http-equiv="refresh" content="12">
+  <title>Mailbot indbakke</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: Arial, sans-serif; margin: 24px; background: #f6f7f9; color: #222; }
-    h1 { margin-bottom: 8px; }
-    h2 { margin-top: 28px; margin-bottom: 10px; }
-    .muted { color: #666; margin-bottom: 20px; }
-    .card {
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      padding: 16px;
-      margin-bottom: 16px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    }
+    body { font-family: Arial, sans-serif; margin: 0; background: #f6f7f9; color: #222; }
+    .wrap { max-width: 1500px; margin: 0 auto; padding: 20px; }
+    h1 { margin: 0 0 8px 0; }
+    .muted { color: #666; margin-bottom: 18px; }
+    .topbar { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .summary { background: white; border-radius: 10px; padding: 12px 16px; border: 1px solid #ddd; }
+    .layout { display: grid; grid-template-columns: 420px 1fr; gap: 18px; align-items: start; }
+    .panel { background: white; border: 1px solid #ddd; border-radius: 14px; overflow: hidden; }
+    .panel h2 { margin: 0; padding: 16px 18px; border-bottom: 1px solid #e5e7eb; }
+    .mail-list { max-height: 76vh; overflow-y: auto; }
+    .mail-item { display:block; text-decoration:none; color:inherit; padding:14px 16px; border-bottom:1px solid #edf2f7; }
+    .mail-item:hover { background:#f8fafc; }
+    .mail-item.active { background:#eef6ff; }
+    .mail-row-top { display:flex; justify-content:space-between; gap:10px; margin-bottom:6px; }
+    .mail-from { font-weight:bold; }
+    .mail-date { color:#6b7280; font-size:13px; white-space:nowrap; }
+    .mail-subject { font-weight:600; margin-bottom:5px; }
+    .mail-preview { color:#4b5563; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .detail { padding: 18px; }
     .row { margin-bottom: 8px; }
     .label { font-weight: bold; }
     .badge {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      background: #eef2ff;
-      color: #334155;
-      margin-left: 6px;
+      display: inline-block; padding: 4px 8px; border-radius: 999px;
+      font-size: 12px; background: #eef2ff; color: #334155; margin-right: 6px;
     }
+    .badge-new { background:#ecfdf5; color:#047857; }
     .status-pending_approval { background: #fff7ed; color: #9a3412; }
     .status-approved_api { background: #eff6ff; color: #1d4ed8; }
     .status-sent { background: #ecfdf5; color: #047857; }
@@ -72,71 +76,25 @@ HTML_TEMPLATE = """
     .status-archived { background: #f1f5f9; color: #475569; }
     .status-send_failed { background: #fef2f2; color: #b91c1c; }
     .actions form { display: inline-block; margin-right: 8px; margin-top: 10px; vertical-align: top; }
-    button {
-      border: 0;
-      border-radius: 8px;
-      padding: 10px 14px;
-      cursor: pointer;
-      font-weight: bold;
-    }
+    button { border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: bold; }
     .approve { background: #2563eb; color: white; }
     .reject { background: #dc2626; color: white; }
     .archive { background: #475569; color: white; }
     .send { background: #059669; color: white; }
     .retry { background: #ea580c; color: white; }
     .save { background: #0f766e; color: white; }
-    .disabled { background: #94a3b8; color: white; cursor: not-allowed; }
-    pre {
-      background: #f8fafc;
-      padding: 12px;
-      border-radius: 8px;
-      white-space: pre-wrap;
-      border: 1px solid #e2e8f0;
-      overflow-x: auto;
-      margin-top: 6px;
-    }
-    textarea {
-      width: 100%;
-      min-height: 180px;
-      padding: 12px;
-      border-radius: 8px;
-      border: 1px solid #cbd5e1;
-      font-family: Arial, sans-serif;
-      font-size: 16px;
-      box-sizing: border-box;
-      resize: vertical;
-      background: #f8fafc;
-    }
-    .topbar {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-bottom: 16px;
-    }
-    .summary {
-      background: white;
-      border-radius: 10px;
-      padding: 12px 16px;
-      border: 1px solid #ddd;
-    }
-    .empty {
-      background: white;
-      border: 1px dashed #cbd5e1;
-      border-radius: 10px;
-      padding: 16px;
-      color: #64748b;
-    }
-    .hint {
-      color: #475569;
-      font-size: 14px;
-      margin-top: 6px;
-      margin-bottom: 12px;
-    }
+    pre { background: #f8fafc; padding: 12px; border-radius: 8px; white-space: pre-wrap; border: 1px solid #e2e8f0; overflow-x: auto; margin-top: 6px; }
+    textarea { width: 100%; min-height: 180px; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-family: Arial, sans-serif; font-size: 16px; box-sizing: border-box; resize: vertical; background: #f8fafc; }
+    .empty { padding:16px; color:#64748b; }
+    details { margin-top: 18px; }
+    summary { cursor:pointer; font-weight:bold; margin-bottom:10px; }
+    .history-item { background:white; border:1px solid #ddd; border-radius:10px; padding:12px 14px; margin-bottom:10px; }
   </style>
 </head>
 <body>
-  <h1>Mailbot godkendelse</h1>
-  <div class="muted">Godkend først. Send bagefter. Siden opdaterer automatisk hvert 10. sekund.</div>
+<div class="wrap">
+  <h1>Mailbot indbakke</h1>
+  <div class="muted">Kun mails der kræver handling vises i indbakken. Behandlede mails ligger i historik.</div>
 
   <div class="topbar">
     <div class="summary">Afventer: <strong>{{ pending_count }}</strong></div>
@@ -146,117 +104,102 @@ HTML_TEMPLATE = """
     <div class="summary">Arkiveret: <strong>{{ archived_count }}</strong></div>
   </div>
 
-  <h2>Aktive mails</h2>
-  {% if active_items %}
-    {% for item in active_items %}
-      <div class="card">
-        <div class="row">
-          <span class="label">Mail ID:</span> {{ item.mail_id }}
-          <span class="badge">{{ item.category }}</span>
-          <span class="badge status-{{ item.status }}">{{ item.status }}</span>
-        </div>
-
-        <div class="row"><span class="label">Fra:</span> {{ item.sender }}</div>
-        <div class="row"><span class="label">Til:</span> {{ item.recipient }}</div>
-        <div class="row"><span class="label">Produktkontekst:</span> {{ item.product_context }}</div>
-        <div class="row"><span class="label">Emne:</span> {{ item.subject }}</div>
-        <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
-        <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
-
-        <div class="row"><span class="label">Renset mailtekst:</span></div>
-        <pre>{{ item.original_preview }}</pre>
-
-        <div class="row"><span class="label">Svarudkast:</span></div>
-        <form method="post" action="{{ url_for('update_draft', mail_id=item.mail_id) }}">
-          <textarea name="draft_reply">{{ item.draft_reply }}</textarea>
-          <div class="hint">Du kan rette teksten før du godkender eller sender.</div>
-          <button class="save" type="submit">Gem ændringer</button>
-        </form>
-
-        {% if item.sent_at %}
-          <div class="row"><span class="label">Sendt:</span> {{ item.sent_at }}</div>
+  <div class="layout">
+    <div class="panel">
+      <h2>Indbakke</h2>
+      <div class="mail-list">
+        {% if active_items %}
+          {% for item in active_items %}
+            <a class="mail-item {% if selected_mail_id == item.mail_id %}active{% endif %}" href="{{ url_for('dashboard', selected=item.mail_id) }}">
+              <div class="mail-row-top">
+                <div class="mail-from">{{ item.sender_name }}</div>
+                <div class="mail-date">{{ item.saved_at_display }}</div>
+              </div>
+              <div style="margin-bottom:6px;">
+                <span class="badge">{{ item.category }}</span>
+                <span class="badge status-{{ item.status }}">{{ item.status }}</span>
+                {% if item.seen == 0 %}
+                  <span class="badge badge-new">NY</span>
+                {% endif %}
+              </div>
+              <div class="mail-subject">{{ item.subject }}</div>
+              <div class="mail-preview">{{ item.preview_line }}</div>
+            </a>
+          {% endfor %}
+        {% else %}
+          <div class="empty">Ingen aktive mails lige nu.</div>
         {% endif %}
+      </div>
+    </div>
 
-        {% if item.send_error %}
-          <div class="row"><span class="label">Sendefejl:</span> {{ item.send_error }}</div>
-        {% endif %}
+    <div class="panel">
+      <h2>Mail</h2>
+      {% if selected_item %}
+        <div class="detail">
+          <div class="row"><span class="label">Fra:</span> {{ selected_item.sender }}</div>
+          <div class="row"><span class="label">Til:</span> {{ selected_item.recipient }}</div>
+          <div class="row"><span class="label">Dato:</span> {{ selected_item.saved_at_display }}</div>
+          <div class="row"><span class="label">Produktkontekst:</span> {{ selected_item.product_context }}</div>
+          <div class="row"><span class="label">Emne:</span> {{ selected_item.subject }}</div>
+          <div class="row"><span class="label">Kræver svar:</span> {{ selected_item.requires_reply }}</div>
+          <div class="row"><span class="label">Resumé:</span> {{ selected_item.summary }}</div>
 
-        <div class="actions">
-          {% if item.status == "pending_approval" %}
-            <form method="post" action="{{ url_for('approve_reply', mail_id=item.mail_id) }}">
-              <button class="approve" type="submit">Godkend til send</button>
-            </form>
-            <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
-              <button class="reject" type="submit">Afvis</button>
-            </form>
-            <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
-              <button class="archive" type="submit">Arkivér</button>
-            </form>
-          {% elif item.status == "approved_api" %}
-            <form method="post" action="{{ url_for('send_reply', mail_id=item.mail_id) }}">
-              <button class="send" type="submit">Send nu</button>
-            </form>
-            <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
-              <button class="reject" type="submit">Afvis</button>
-            </form>
-            <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
-              <button class="archive" type="submit">Arkivér</button>
-            </form>
-          {% elif item.status == "send_failed" %}
-            <form method="post" action="{{ url_for('send_reply', mail_id=item.mail_id) }}">
-              <button class="retry" type="submit">Prøv at sende igen</button>
-            </form>
-            <form method="post" action="{{ url_for('reject_reply', mail_id=item.mail_id) }}">
-              <button class="reject" type="submit">Afvis</button>
-            </form>
-            <form method="post" action="{{ url_for('archive_reply', mail_id=item.mail_id) }}">
-              <button class="archive" type="submit">Arkivér</button>
-            </form>
+          <div class="row"><span class="label">Renset mailtekst:</span></div>
+          <pre>{{ selected_item.original_preview }}</pre>
+
+          <div class="row"><span class="label">Svarudkast:</span></div>
+          <form method="post" action="{{ url_for('update_draft', mail_id=selected_item.mail_id) }}">
+            <textarea name="draft_reply">{{ selected_item.draft_reply }}</textarea>
+            <button class="save" type="submit">Gem ændringer</button>
+          </form>
+
+          {% if selected_item.send_error %}
+            <div class="row"><span class="label">Sendefejl:</span> {{ selected_item.send_error }}</div>
           {% endif %}
+
+          <div class="actions">
+            {% if selected_item.status == "pending_approval" %}
+              <form method="post" action="{{ url_for('approve_reply', mail_id=selected_item.mail_id) }}"><button class="approve" type="submit">Godkend til send</button></form>
+              <form method="post" action="{{ url_for('reject_reply', mail_id=selected_item.mail_id) }}"><button class="reject" type="submit">Afvis</button></form>
+              <form method="post" action="{{ url_for('archive_reply', mail_id=selected_item.mail_id) }}"><button class="archive" type="submit">Arkivér</button></form>
+            {% elif selected_item.status == "approved_api" %}
+              <form method="post" action="{{ url_for('send_reply', mail_id=selected_item.mail_id) }}"><button class="send" type="submit">Send nu</button></form>
+              <form method="post" action="{{ url_for('reject_reply', mail_id=selected_item.mail_id) }}"><button class="reject" type="submit">Afvis</button></form>
+              <form method="post" action="{{ url_for('archive_reply', mail_id=selected_item.mail_id) }}"><button class="archive" type="submit">Arkivér</button></form>
+            {% elif selected_item.status == "send_failed" %}
+              <form method="post" action="{{ url_for('send_reply', mail_id=selected_item.mail_id) }}"><button class="retry" type="submit">Prøv at sende igen</button></form>
+              <form method="post" action="{{ url_for('reject_reply', mail_id=selected_item.mail_id) }}"><button class="reject" type="submit">Afvis</button></form>
+              <form method="post" action="{{ url_for('archive_reply', mail_id=selected_item.mail_id) }}"><button class="archive" type="submit">Arkivér</button></form>
+            {% endif %}
+          </div>
         </div>
-      </div>
-    {% endfor %}
-  {% else %}
-    <div class="empty">Ingen aktive mails lige nu.</div>
-  {% endif %}
+      {% else %}
+        <div class="empty">Vælg en mail i indbakken.</div>
+      {% endif %}
+    </div>
+  </div>
 
-  <h2>Historik</h2>
-  {% if history_items %}
-    {% for item in history_items %}
-      <div class="card">
-        <div class="row">
-          <span class="label">Mail ID:</span> {{ item.mail_id }}
-          <span class="badge">{{ item.category }}</span>
-          <span class="badge status-{{ item.status }}">{{ item.status }}</span>
+  <details>
+    <summary>Historik</summary>
+    {% if history_items %}
+      {% for item in history_items %}
+        <div class="history-item">
+          <div><strong>{{ item.saved_at_display }}</strong> — {{ item.sender_name }} — {{ item.subject }}</div>
+          <div style="margin-top:6px;">
+            <span class="badge">{{ item.category }}</span>
+            <span class="badge status-{{ item.status }}">{{ item.status }}</span>
+          </div>
+          <div style="margin-top:6px; color:#4b5563;">{{ item.preview_line }}</div>
         </div>
-
-        <div class="row"><span class="label">Fra:</span> {{ item.sender }}</div>
-        <div class="row"><span class="label">Til:</span> {{ item.recipient }}</div>
-        <div class="row"><span class="label">Produktkontekst:</span> {{ item.product_context }}</div>
-        <div class="row"><span class="label">Emne:</span> {{ item.subject }}</div>
-        <div class="row"><span class="label">Kræver svar:</span> {{ item.requires_reply }}</div>
-        <div class="row"><span class="label">Resumé:</span> {{ item.summary }}</div>
-        <div class="row"><span class="label">Renset mailtekst:</span></div>
-        <pre>{{ item.original_preview }}</pre>
-        <div class="row"><span class="label">Svarudkast:</span></div>
-        <pre>{{ item.draft_reply }}</pre>
-
-        {% if item.sent_at %}
-          <div class="row"><span class="label">Sendt:</span> {{ item.sent_at }}</div>
-        {% endif %}
-
-        {% if item.send_error %}
-          <div class="row"><span class="label">Sendefejl:</span> {{ item.send_error }}</div>
-        {% endif %}
-      </div>
-    {% endfor %}
-  {% else %}
-    <div class="empty">Ingen historik endnu.</div>
-  {% endif %}
+      {% endfor %}
+    {% else %}
+      <div class="empty">Ingen historik endnu.</div>
+    {% endif %}
+  </details>
+</div>
 </body>
 </html>
 """
-
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -283,7 +226,8 @@ def init_db():
                 original_preview TEXT,
                 status TEXT,
                 sent_at TEXT,
-                send_error TEXT
+                send_error TEXT,
+                seen INTEGER DEFAULT 0
             )
         """)
 
@@ -301,6 +245,8 @@ def ensure_replies_columns():
             cur.execute("ALTER TABLE replies ADD COLUMN recipient TEXT")
         if "product_context" not in columns:
             cur.execute("ALTER TABLE replies ADD COLUMN product_context TEXT")
+        if "seen" not in columns:
+            cur.execute("ALTER TABLE replies ADD COLUMN seen INTEGER DEFAULT 0")
 
         conn.commit()
         conn.close()
@@ -498,6 +444,25 @@ def extract_first_name(sender):
     first = parts[0].strip(" ,.-")
     return first if first else "der"
 
+def extract_sender_name(sender):
+    name, addr = email.utils.parseaddr(sender or "")
+    return name.strip() or addr or sender or "(ukendt)"
+
+def format_display_datetime(value):
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.strftime("%d/%m %H:%M")
+    except Exception:
+        return value
+
+def preview_line(text):
+    if not text:
+        return ""
+    first = text.splitlines()[0].strip()
+    return first[:120]
+
 def next_weekday_date(target_weekday: int) -> str:
     today = datetime.now().date()
     days_ahead = target_weekday - today.weekday()
@@ -530,14 +495,21 @@ def load_replies_by_status(statuses):
         cur = conn.cursor()
         cur.execute(f"""
             SELECT mail_id, saved_at, sender, recipient, product_context, subject, category, requires_reply,
-                   summary, draft_reply, original_preview, status, sent_at, send_error
+                   summary, draft_reply, original_preview, status, sent_at, send_error, seen
             FROM replies
             WHERE status IN ({placeholders})
             ORDER BY datetime(COALESCE(sent_at, saved_at)) DESC
         """, tuple(statuses))
-        rows = cur.fetchall()
+        rows = [dict(row) for row in cur.fetchall()]
         conn.close()
-        return [dict(row) for row in rows]
+
+    for row in rows:
+        row["sender_name"] = extract_sender_name(row.get("sender", ""))
+        row["saved_at_display"] = format_display_datetime(row.get("saved_at"))
+        row["preview_line"] = preview_line(row.get("original_preview", ""))
+        if row.get("seen") is None:
+            row["seen"] = 0
+    return rows
 
 def already_saved_reply(mail_id):
     with file_lock:
@@ -548,7 +520,7 @@ def already_saved_reply(mail_id):
         conn.close()
         return row is not None
 
-def save_pending_reply(mail_id, sender, recipient, product_context, subject, category, summary, reply_needed, draft_reply, original_preview):
+def save_pending_reply(mail_id, sender, recipient, product_context, subject, category, summary, reply_needed, draft_reply, original_preview, status="pending_approval"):
     if already_saved_reply(mail_id):
         return
 
@@ -558,8 +530,8 @@ def save_pending_reply(mail_id, sender, recipient, product_context, subject, cat
         cur.execute("""
             INSERT INTO replies (
                 mail_id, saved_at, sender, recipient, product_context, subject, category, requires_reply,
-                summary, draft_reply, original_preview, status, sent_at, send_error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                summary, draft_reply, original_preview, status, sent_at, send_error, seen
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             str(mail_id),
             datetime.utcnow().isoformat() + "Z",
@@ -572,9 +544,10 @@ def save_pending_reply(mail_id, sender, recipient, product_context, subject, cat
             summary,
             draft_reply,
             original_preview[:4000],
-            "pending_approval",
+            status,
             None,
-            None
+            None,
+            0
         ))
         conn.commit()
         conn.close()
@@ -585,9 +558,17 @@ def update_reply_status(mail_id, new_status, send_error=None, sent_at=None):
         cur = conn.cursor()
         cur.execute("""
             UPDATE replies
-            SET status = ?, send_error = ?, sent_at = ?
+            SET status = ?, send_error = ?, sent_at = ?, seen = 1
             WHERE mail_id = ?
         """, (new_status, send_error, sent_at, str(mail_id)))
+        conn.commit()
+        conn.close()
+
+def mark_as_seen(mail_id):
+    with file_lock:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE replies SET seen = 1 WHERE mail_id = ?", (str(mail_id),))
         conn.commit()
         conn.close()
 
@@ -597,19 +578,28 @@ def get_reply_by_id(mail_id):
         cur = conn.cursor()
         cur.execute("""
             SELECT mail_id, saved_at, sender, recipient, product_context, subject, category, requires_reply,
-                   summary, draft_reply, original_preview, status, sent_at, send_error
+                   summary, draft_reply, original_preview, status, sent_at, send_error, seen
             FROM replies
             WHERE mail_id = ?
         """, (str(mail_id),))
         row = cur.fetchone()
         conn.close()
-        return dict(row) if row else None
+
+    if row:
+        item = dict(row)
+        item["sender_name"] = extract_sender_name(item.get("sender", ""))
+        item["saved_at_display"] = format_display_datetime(item.get("saved_at"))
+        item["preview_line"] = preview_line(item.get("original_preview", ""))
+        if item.get("seen") is None:
+            item["seen"] = 0
+        return item
+    return None
 
 def update_reply_draft(mail_id, new_text):
     with file_lock:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE replies SET draft_reply = ? WHERE mail_id = ?", (new_text, str(mail_id)))
+        cur.execute("UPDATE replies SET draft_reply = ?, seen = 1 WHERE mail_id = ?", (new_text, str(mail_id)))
         conn.commit()
         conn.close()
 
@@ -682,6 +672,24 @@ def normalize_draft_reply(draft_reply, sender, product_key=""):
     text = text.replace(" Mvh Ulla Vase", "\n\nMvh Ulla Vase")
     return text.strip()
 
+def is_weak_reply(text):
+    if not text:
+        return True
+    normalized = text.strip()
+    if len(normalized) < 35:
+        return True
+    lowered = normalized.lower()
+    weak_patterns = [
+        "hej kim,\n\nmvh ulla vase",
+        "hej,\n\nmvh ulla vase",
+        "hej kim,\nmvh ulla vase",
+        "hej,\nmvh ulla vase",
+    ]
+    if lowered in weak_patterns:
+        return True
+    content = lowered.replace("mvh ulla vase", "").replace("hej kim,", "").replace("hej,", "").strip()
+    return len(content) < 20
+
 def fallback_vinterguide_price_reply(sender):
     first_name = extract_first_name(sender)
     return f"""Hej {first_name},
@@ -709,6 +717,53 @@ Du kan læse mere her:
 https://vinterguide.dk/intro.html#priser
 
 Mvh Ulla Vase""".strip()
+
+def fallback_vinterguide_offer_reply(sender):
+    first_name = extract_first_name(sender)
+    return f"""Hej {first_name},
+
+VinterGuide er en digital platform til virksomheder og organisationer, der arbejder med snerydning, saltning og vintertjeneste.
+
+Systemet samler planlægning, chauffører, opgaver og dokumentation i ét system, så man får bedre overblik over hvad der er lavet, hvornår det er lavet, og af hvem.
+
+Det bruges typisk til planlægning af ruter, styring af chauffører, dokumentation af udført arbejde og overblik i realtid.
+
+Hvis du også vil have priserne med, så findes VinterGuide i tre løsninger:
+Starter: 129 kr pr. bruger pr. måned
+Pro: 179 kr pr. bruger pr. måned
+Business: 229 kr pr. bruger pr. måned
+
+Der betales for et år ad gangen, og du kan læse mere her:
+https://vinterguide.dk/intro.html#priser
+
+Mvh Ulla Vase""".strip()
+
+def needs_offer_reply(body, subject):
+    combined = f"{(subject or '').lower()} {(body or '').lower()}"
+    patterns = [
+        "hvad kan i tilbyde", "hvad tilbyder i", "hvad er det for et firma",
+        "hvad er det for en virksomhed", "hvad laver i",
+        "høre mere om hvad i kan tilbyde", "høre mere om systemet", "hvad kan i"
+    ]
+    return any(p in combined for p in patterns)
+
+def looks_like_price_question(body, subject):
+    combined = f"{(subject or '').lower()} {(body or '').lower()}"
+    patterns = ["pris", "priser", "bruger", "brugere", "starter", "pro", "business", "platform", "platforme", "årligt"]
+    return any(p in combined for p in patterns)
+
+def should_auto_archive(sender, subject, body):
+    combined = f"{(sender or '').lower()} {(subject or '').lower()} {(body or '').lower()}"
+    auto_patterns = [
+        "no-reply", "noreply", "order_acknowledgment", "orders.apple.com",
+        "verify your identity", "verify sign-in", "signin.aws",
+        "bekræft videresendelse", "videresendelse af e-mails",
+        "instagram", "facebook", "meta business", "apple store",
+        "ordrenummer", "verification", "confirm", "password reset",
+        "reset password", "support@dk.one.com", "skat.dk", "email-service.skat.dk",
+        "donotreply@email-service.skat.dk"
+    ]
+    return any(p in combined for p in auto_patterns)
 
 def ai_analyze_email(sender, recipient, subject, body):
     client = get_openai_client()
@@ -753,9 +808,7 @@ Vigtige regler:
 - Du SKAL inkludere linket https://vinterguide.dk/intro.html#priser ved prisforespørgsler.
 - Du SKAL lave linjeskift mellem afsnit.
 - Du SKAL altid udfylde SVARUDKAST med et konkret svar hvis KRÆVER_SVAR er ja.
-- SVARUDKAST SKAL altid indeholde et konkret svar.
-Hvis du er i tvivl, så giv et bedste realistiske svar baseret på konteksten.
-Du må ALDRIG skrive "intet".
+- SVARUDKAST må ALDRIG være tomt.
 - Svarudkast skal afsluttes med: "Mvh Ulla Vase"
 - Hvis der ikke skal svares, skriv "intet".
 
@@ -787,6 +840,14 @@ Renset mailindhold:
         input=prompt
     )
     return response.output_text.strip(), product_key
+
+def choose_fallback_reply(sender, subject, body, product_key):
+    if product_key == "vinterguide":
+        if needs_offer_reply(body, subject):
+            return fallback_vinterguide_offer_reply(sender)
+        if looks_like_price_question(body, subject):
+            return fallback_vinterguide_price_reply(sender)
+    return f"Hej {extract_first_name(sender)},\n\nTak for din mail. Jeg vender tilbage med et konkret svar.\n\nMvh Ulla Vase"
 
 def send_via_resend(to_email, original_subject, draft_reply, sender):
     if not RESEND_API_KEY:
@@ -877,7 +938,7 @@ def check_mail():
 
         status, msg_data = mail.fetch(mail_id, "(RFC822)")
         if status != "OK":
-            print(f"Kunne ikke hente mail {mail_id_int}")
+            print(f"Kunde ikke hente mail {mail_id_int}")
             continue
 
         for response_part in msg_data:
@@ -899,6 +960,40 @@ def check_mail():
             print("----------------------------------------")
 
             try:
+                if should_auto_archive(sender, subject, cleaned_body):
+                    save_pending_reply(
+                        mail_id=mail_id_int,
+                        sender=sender,
+                        recipient=recipient,
+                        product_context="automatisk",
+                        subject=subject,
+                        category="automatisk",
+                        summary="Systemmail / automatisk mail der ikke kræver svar.",
+                        reply_needed="nej",
+                        draft_reply="intet",
+                        original_preview=cleaned_body,
+                        status="archived"
+                    )
+                    update_reply_status(mail_id_int, "archived")
+                    continue
+
+                if cleaned_body.strip() == "(intet indhold)":
+                    save_pending_reply(
+                        mail_id=mail_id_int,
+                        sender=sender,
+                        recipient=recipient,
+                        product_context="tom",
+                        subject=subject,
+                        category="automatisk",
+                        summary="Tom mail uden indhold.",
+                        reply_needed="nej",
+                        draft_reply="intet",
+                        original_preview=cleaned_body,
+                        status="archived"
+                    )
+                    update_reply_status(mail_id_int, "archived")
+                    continue
+
                 ai_result, product_key = ai_analyze_email(
                     sender=sender,
                     recipient=recipient,
@@ -916,13 +1011,40 @@ def check_mail():
                 summary = parsed["summary"]
                 raw_reply = parsed.get("draft_reply", "").strip()
 
-               if not raw_reply or len(raw_reply.strip()) < 20:
-    raw_reply = f"Hej {extract_first_name(sender)},\n\nTak for din mail. Jeg vender tilbage med et konkret svar.\n\nMvh Ulla Vase"
-                        raw_reply = fallback_vinterguide_price_reply(sender)
-                    else:
-                        raw_reply = f"Hej {extract_first_name(sender)},\n\nTak for din mail. Jeg vender tilbage med et konkret svar.\n\nMvh Ulla Vase"
+                if not raw_reply or raw_reply.lower() == "intet" or is_weak_reply(raw_reply):
+                    raw_reply = choose_fallback_reply(sender, subject, cleaned_body, product_key)
 
                 draft_reply = normalize_draft_reply(raw_reply, sender, product_key)
+
+                if is_weak_reply(draft_reply):
+                    draft_reply = normalize_draft_reply(
+                        choose_fallback_reply(sender, subject, cleaned_body, product_key),
+                        sender,
+                        product_key
+                    )
+
+                no_reply_markers = [
+                    "ingen direkte spørgsmål",
+                    "ingen handling nødvendig",
+                    "kræver ikke svar",
+                ]
+
+                if requires_reply != "ja" or any(marker in summary.lower() for marker in no_reply_markers):
+                    save_pending_reply(
+                        mail_id=mail_id_int,
+                        sender=sender,
+                        recipient=recipient,
+                        product_context=product_key,
+                        subject=subject,
+                        category=category,
+                        summary=summary or "Ingen handling nødvendig.",
+                        reply_needed="nej",
+                        draft_reply="intet",
+                        original_preview=cleaned_body,
+                        status="archived"
+                    )
+                    update_reply_status(mail_id_int, "archived")
+                    continue
 
                 if category in REPLY_CATEGORIES and requires_reply == "ja":
                     save_pending_reply(
@@ -935,10 +1057,25 @@ def check_mail():
                         summary=summary,
                         reply_needed=requires_reply,
                         draft_reply=draft_reply,
-                        original_preview=cleaned_body
+                        original_preview=cleaned_body,
+                        status="pending_approval"
                     )
                     print("SVARUDKAST GEMT")
                 else:
+                    save_pending_reply(
+                        mail_id=mail_id_int,
+                        sender=sender,
+                        recipient=recipient,
+                        product_context=product_key,
+                        subject=subject,
+                        category=category,
+                        summary=summary or "Ingen handling nødvendig.",
+                        reply_needed="nej",
+                        draft_reply="intet",
+                        original_preview=cleaned_body,
+                        status="archived"
+                    )
+                    update_reply_status(mail_id_int, "archived")
                     print("INGEN SVAR NØDVENDIGT")
 
             except Exception as e:
@@ -959,12 +1096,25 @@ def polling_loop():
 def dashboard():
     active_items = load_replies_by_status(["pending_approval", "approved_api", "send_failed"])
     history_items = load_replies_by_status(["sent", "rejected", "archived"])
+    selected_mail_id = request.args.get("selected")
+
+    selected_item = None
+    if active_items:
+        if selected_mail_id:
+            selected_item = next((item for item in active_items if str(item["mail_id"]) == str(selected_mail_id)), None)
+        if not selected_item:
+            selected_item = active_items[0]
+        if selected_item:
+            mark_as_seen(selected_item["mail_id"])
+
     counts = get_counts()
 
     return render_template_string(
         HTML_TEMPLATE,
         active_items=active_items,
-        history_items=history_items,
+        history_items=history_items[:100],
+        selected_item=selected_item,
+        selected_mail_id=str(selected_item["mail_id"]) if selected_item else None,
         pending_count=counts["pending_approval"],
         approved_count=counts["approved_api"],
         sent_count=counts["sent"],
@@ -972,12 +1122,12 @@ def dashboard():
         archived_count=counts["archived"]
     )
 
-@app.route("/update_draft/<mail_id>", methods=["POST"])
+@app.route("/update_draft/<mail_id>", methods=["POST"])@app.route("/update_draft/<mail_id>", methods=["POST"])
 def update_draft(mail_id):
     new_text = request.form.get("draft_reply", "").strip()
     if new_text:
         update_reply_draft(mail_id, new_text)
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("dashboard", selected=mail_id))
 
 @app.route("/approve/<mail_id>", methods=["POST"])
 def approve_reply(mail_id):
