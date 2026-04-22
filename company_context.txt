@@ -1,18 +1,19 @@
 Virksomhed: Vweb
-Ejer: Ulla Vase
+Ejer: Kim Vase
 
-Vweb er virksomheden bag flere digitale produkter og løsninger.
-Virksomheden arbejder med udvikling af systemer, der gør hverdagen lettere og mere overskuelig for kunderne.
-
+Vweb er virksomheden bag digitale produkter og løsninger.
 Lige nu er VinterGuide det vigtigste produkt, men Vweb arbejder også med andre produkter, blandt andet SlushBook.
 
 Når der svares på mails:
-- der svares som Kim Vase
+- der svares som Ulla Vase
 - tonen er direkte, venlig og menneskelig
 - svar skal være korte og konkrete
 - der bruges ikke unødig salgssnak
 - der svares på det konkrete spørgsmål
 
+VinterGuide er en digital platform til virksomheder og organisationer, der arbejder med snerydning, saltning og vintertjeneste.
+Systemet samler planlægning, chauffører, opgaver og dokumentation i ét system, så man får bedre overblik over hvad der er lavet, hvornår det er lavet, og af hvem.
+Det bruges typisk til planlægning af ruter, styring af chauffører, dokumentation af udført arbejde og overblik i realtid.
 
 ---
 
