@@ -21,7 +21,7 @@ from openai import OpenAI
 app = Flask(__name__)
 file_lock = threading.Lock()
 
-IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
+IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.one.com")
 MAILBOX = os.getenv("MAILBOX", "INBOX")
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "60"))
 PORT = int(os.getenv("PORT", "8080"))
