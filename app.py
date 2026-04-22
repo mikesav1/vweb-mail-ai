@@ -1122,7 +1122,7 @@ def dashboard():
         archived_count=counts["archived"]
     )
 
-@app.route("/update_draft/<mail_id>", methods=["POST"])@app.route("/update_draft/<mail_id>", methods=["POST"])
+@app.route("/update_draft/<mail_id>", methods=["POST"])
 def update_draft(mail_id):
     new_text = request.form.get("draft_reply", "").strip()
     if new_text:
