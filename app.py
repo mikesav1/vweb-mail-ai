@@ -979,9 +979,11 @@ def check_mail():
 def polling_loop():
     while True:
         try:
+            print("Polling starter...")
             check_mail()
+            print("Polling færdig.")
         except Exception as e:
-            print(f"Fejl: {e}")
+            print(f"Fejl i polling_loop: {e}")
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
