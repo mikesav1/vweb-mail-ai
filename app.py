@@ -28,8 +28,8 @@ CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "60"))
 PORT = int(os.getenv("PORT", "8080"))
 DB_PATH = os.getenv("DB_PATH", "mailbot.db")
 
-MAIL_USER = os.getenv("MAIL_USER", "kim@vinterguide.dk")
-MAIL_PASS = os.getenv("MAIL_PASS", "KW9XE3hiYpQ!WzYrJ9Wj")
+MAIL_USER = os.getenv("MAIL_USER", "")
+MAIL_PASS = os.getenv("MAIL_PASS", "")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
