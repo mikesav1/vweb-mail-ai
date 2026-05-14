@@ -1143,3 +1143,4 @@ if __name__ == "__main__":
     worker.start()
 
     app.run(host="0.0.0.0", port=PORT)
+print("KIM TEST VERSION 15-29", flush=True)
