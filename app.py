@@ -5,6 +5,7 @@ import imaplib
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from email import message_from_bytes
 from email.header import decode_header, make_header
 from email.utils import parseaddr
@@ -18,29 +19,80 @@ from openai import OpenAI
 # -----------------------------
 # App config
 # -----------------------------
+import os
+
+import re
+
+import time
+
+import imaplib
+
+import sqlite3
+
+import threading
+
+from pathlib import Path
+
+from datetime import datetime, timedelta, timezone
+
+from email import message_from_bytes
+
+from email.header import decode_header, make_header
+
+from email.utils import parseaddr
+
+import resend
+
+from bs4 import BeautifulSoup
+
+from flask import Flask, redirect, render_template_string, request, url_for
+
+from openai import OpenAI
+
+# -----------------------------
+
+# App config
+
+# -----------------------------
+
 app = Flask(__name__)
+
 file_lock = threading.Lock()
 
 IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.one.com")
+
 MAILBOX = os.getenv("MAILBOX", "INBOX")
+
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "60"))
+
 PORT = int(os.getenv("PORT", "8080"))
+
 DB_PATH = os.getenv("DB_PATH", "mailbot.db")
 
 MAIL_USER = os.getenv("MAIL_USER", "kim@vinterguide.dk")
+
 MAIL_PASS = os.getenv("MAIL_PASS", "KW9XE3hiYpQ!WzYrJ9Wj")
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+
 AI_FROM_EMAIL = os.getenv("AI_FROM_EMAIL", "kim@vinterguide.dk")
 
 SMTP_SERVER = os.getenv("SMTP_SERVER", "send.one.com")
+
 SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "true").lower() == "true"
+
 COMPANY_CONTEXT_FILE = os.getenv("COMPANY_CONTEXT_FILE", "company_context.txt")
+
 PRODUCT_VINTERGUIDE_FILE = os.getenv("PRODUCT_VINTERGUIDE_FILE", "product_vinterguide.txt")
+
 PRODUCT_SLUSHBOOK_FILE = os.getenv("PRODUCT_SLUSHBOOK_FILE", "product_slushbook.txt")
 
 REPLY_CATEGORIES = {"kunde", "vigtig", "ukendt"}
+
 AUTO_CATEGORIES = {"spam", "nyhedsbrev", "automatisk"}
 
 
