@@ -21,6 +21,30 @@ from openai import OpenAI
 app = Flask(__name__)
 file_lock = threading.Lock()
 
+jeg pprøver med en ny streng du falder hele tiden ud
+som sagt virker min bot ikke med videresendelsen, min mail adresse er kim@vinterguide.dk
+setup hos one.com er
+IMAP-server
+
+imap.one.com
+IMAP-port
+
+993
+POP3-server
+
+pop.one.com
+POP3-port
+
+995
+SMTP-server
+
+send.one.com
+SMTP-port
+
+465
+
+og det er hvad der strår i app.pry kan du rette den til
+
 IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
 MAILBOX = os.getenv("MAILBOX", "INBOX")
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "60"))
@@ -32,7 +56,6 @@ MAIL_PASS = os.getenv("MAIL_PASS", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 AI_FROM_EMAIL = os.getenv("AI_FROM_EMAIL", "")
-
 COMPANY_CONTEXT_FILE = os.getenv("COMPANY_CONTEXT_FILE", "company_context.txt")
 PRODUCT_VINTERGUIDE_FILE = os.getenv("PRODUCT_VINTERGUIDE_FILE", "product_vinterguide.txt")
 PRODUCT_SLUSHBOOK_FILE = os.getenv("PRODUCT_SLUSHBOOK_FILE", "product_slushbook.txt")
