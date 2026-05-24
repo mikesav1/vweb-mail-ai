@@ -713,13 +713,21 @@ Mvh Ulla Vase""".strip()
 
 
 def should_auto_ignore(sender, subject, body):
+
     sender_l = (sender or "").lower()
+
     subject_l = (subject or "").lower()
+
     body_l = (body or "").lower()
+
     combined = f"{sender_l} {subject_l} {body_l}"
-  # SlushBook og VinterGuide mails må aldrig auto-ignoreres
-if "slushbook" in combined or "vinterguide" in combined:
-    return False
+
+    # SlushBook og VinterGuide mails må aldrig auto-ignoreres
+
+    if "slushbook" in combined or "vinterguide" in combined:
+
+        return False
+
     patterns = [
     "no-reply",
     "noreply",
