@@ -719,16 +719,28 @@ def should_auto_ignore(sender, subject, body):
     combined = f"{sender_l} {subject_l} {body_l}"
 
     patterns = [
-        "no-reply", "noreply", "donotreply", "do-not-reply",
-        "order_acknowledgment", "orders.apple.com", "shipping_notification",
-        "verify your identity", "verify sign-in", "verify your email",
-        "signin.aws", "signup.aws", "amazon web services",
-        "instagram", "facebook", "meta business", "meta verified",
-        "dmarc", "report domain", "delivery delayed", "undeliverable",
-        "nyhedsbrev", "newsletter", "unsubscribe", "afmeld",
-        "password reset", "reset password", "validation code",
-        "support@dk.one.com", "mastercard open banking hub gendannelseskode",
-    ]
+    "no-reply",
+    "noreply",
+    "donotreply",
+    "do-not-reply",
+
+    "dmarc",
+    "report domain",
+    "delivery delayed",
+    "undeliverable",
+
+    "unsubscribe",
+    "afmeld",
+
+    "password reset",
+    "reset password",
+    "validation code",
+
+    "verify sign-in",
+    "verify your identity",
+
+    "support@dk.one.com",
+]
 
     return any(p in combined for p in patterns)
 
