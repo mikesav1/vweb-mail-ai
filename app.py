@@ -719,7 +719,7 @@ def should_auto_ignore(sender, subject, body):
     combined = f"{sender_l} {subject_l} {body_l}"
   
     # SlushBook og VinterGuide mails må aldrig auto-ignoreres
-    if "slushbook" in combined or "vinterguide" in combined:
+  if "slushbook" in combined or "vinterguide" in combined:
     return False
   
     patterns = [
